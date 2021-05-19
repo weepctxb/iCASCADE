@@ -1,5 +1,23 @@
 from math import radians, cos, sin, asin, sqrt
+
+import networkx as nx
+
 from globalparams import POWER_LINE_PP_EPS
+import json
+import numpy as np
+
+
+class CustomEncoder(json.JSONEncoder):
+    """Custom JSON Encoder to handle numpy variables"""
+    def default(self, o):
+        if isinstance(o, np.integer):
+            return int(o)  # cast numpy int to vanilla int
+        elif isinstance(o, int):
+            return int(o)
+        elif isinstance(o, np.float):
+            return round(float(o), 6)  # cast numpy float to vanilla float
+        else:
+            return super().default(o)  # otherwise fall back to base implementation in JSONEncoder
 
 
 def haversine(lon1, lat1, lon2, lat2):
@@ -66,3 +84,13 @@ def douglas_peucker(linenodes, eps=POWER_LINE_PP_EPS):
         linenodes_res = firstnode.append(lastnode)
 
     return linenodes_res
+
+
+# TODO Proof-of-concept, not tested yet
+def cluster(G, nodes_to_cluster):
+    G1 = G
+    for node in nodes_to_cluster[1:]:
+        G1 = nx.contracted_nodes(G1, nodes_to_cluster[0], node, self_loops=False, copy=True)
+    return G1
+
+

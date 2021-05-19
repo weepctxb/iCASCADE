@@ -13,7 +13,7 @@ if __name__ == "__main__":
     # FYI NOT IN USE
 
     # Stations and lines
-    transport_multiplex_G = pickle.load(open(r'data/transport_multiplex/out/transport_multiplex_G.pkl', "rb"))
+    transport_multiplex_G = pickle.load(open(r'data/transport_multiplex_G.pkl', "rb"))
     # Power_supply, site, yard, depot, engine_shed
     transport_osm_G = pickle.load(open(r'data/transport_osm/out/transport_OSM_G.pkl', "rb"))
 

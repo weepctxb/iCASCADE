@@ -42,7 +42,7 @@ def visualiser_power_osm():
 
 def visualiser_transport_multiplex():
 
-    transport_multiplex_G = pickle.load(open(r'data/transport_multiplex/out/transport_multiplex_G.pkl', "rb"))
+    transport_multiplex_G = pickle.load(open(r'data/transport_multiplex_G.pkl', "rb"))
 
     london_transport_multiplex_map = folium.Map(location=LONDON_COORDS, zoom_start=10, prefer_canvas=True)
 
