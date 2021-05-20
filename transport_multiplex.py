@@ -155,19 +155,22 @@ def create_transport_multiplex_graph(nodes, edges, odmat):
         G.nodes[n]["thruflow"] = 0
         # Calculate through flows
         for ne in G.neighbors(n):
-            G.nodes[n]["thruflow"] += G.edges[n, ne] / 2  # to avoid double-counting flows
+            G.nodes[n]["thruflow"] += G.edges[n, ne]["flow"] / 2  # to avoid double-counting flows
 
     # T.M.1.2.8 Assign flow capacity
     # TODO To test
     for u, v in G.edges():
-        # TODO Too simplistic - need data
+        # TODO Too simplistic - need to integrate tph data
         G.edges[u, v]["flow_cap"] = LOAD_CAP * G.edges[u, v]["flow"]
 
     # T.M.1.2.9 Assign node capacity
     # TODO To test
     for n in G.nodes():
-        # TODO Too simplistic - need data
-        G.nodes[n]["thruflow_cap"] = LOAD_CAP * G.nodes[n]["thruflow"]
+        # Initialise capacities
+        G.nodes[n]["thruflow_cap"] = 0
+        # Calculate capacities as sum of flow capacities of neighbouring links
+        for ne in G.neighbors(n):
+            G.nodes[n]["thruflow_cap"] += G.edges[n, ne]["flow_cap"] / 2  # to avoid double-counting flows
 
     return G, pos, node_sizes
 
