@@ -14,7 +14,8 @@ POWER_COLORS = {
     "switch": "#8601AF",
     "compensator": "#808080",
     "pole": "#996633",
-    "tower": "#604020"
+    "tower": "#604020",
+    "load": "#CC66FF"
 }
 
 TRANSPORT_COLORS = {
