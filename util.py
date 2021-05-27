@@ -86,6 +86,55 @@ def douglas_peucker(linenodes, eps=POWER_LINE_PP_EPS):
     return linenodes_res
 
 
+def weakly_connected_component_subgraphs(G, copy=True):
+    """Generate weakly connected components as subgraphs.
+
+    Parameters
+    ----------
+    G : NetworkX graph
+        A directed graph.
+
+    copy: bool (default=True)
+        If True make a copy of the graph attributes
+
+    Returns
+    -------
+    comp : generator
+        A generator of graphs, one for each weakly connected component of G.
+
+    Examples
+    --------
+    Generate a sorted list of weakly connected components, largest first.
+
+    >>> G = nx.path_graph(4, create_using=nx.DiGraph())
+    >>> G.add_path([10, 11, 12])
+    >>> [len(c) for c in sorted(nx.weakly_connected_component_subgraphs(G),
+    ...                         key=len, reverse=True)]
+    [4, 3]
+
+    If you only want the largest component, it's more efficient to
+    use max instead of sort.
+
+    >>> Gc = max(nx.weakly_connected_component_subgraphs(G), key=len)
+
+    See Also
+    --------
+    strongly_connected_components
+    connected_components
+
+    Notes
+    -----
+    For directed graphs only.
+    Graph, node, and edge attributes are copied to the subgraphs by default.
+
+    """
+    for comp in nx.weakly_connected_components(G):
+        if copy:
+            yield G.subgraph(comp).copy()
+        else:
+            yield G.subgraph(comp)
+
+
 # TODO Proof-of-concept, not tested yet
 def cluster(G, nodes_to_cluster):
     G1 = G

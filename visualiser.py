@@ -1,6 +1,7 @@
 import pickle
 import folium
 import numpy as np
+import cvxpy as cp
 
 from globalparams import POWER_COLORS, TRANSPORT_COLORS, LONDON_COORDS
 
@@ -60,8 +61,12 @@ def visualiser_power_ukpn():
     for node in power_ukpn_G.nodes():
         marker_popup_desc = "ID: " + str(node) + " | "
         for attr in power_ukpn_G.nodes[node].keys():
-            if power_ukpn_G.nodes[node][attr] not in ["nan", "", "-", np.nan, None]:
-                marker_popup_desc += str(attr) + ": " + str(power_ukpn_G.nodes[node][attr]) + " | "
+            if isinstance(power_ukpn_G.nodes[node][attr], cp.Variable):
+                if power_ukpn_G.nodes[node][attr].value not in ["nan", "", "-", np.nan, None]:
+                    marker_popup_desc += str(attr) + ": " + str(power_ukpn_G.nodes[node][attr].value) + " | "
+            else:
+                if power_ukpn_G.nodes[node][attr] not in ["nan", "", "-", np.nan, None]:
+                    marker_popup_desc += str(attr) + ": " + str(power_ukpn_G.nodes[node][attr]) + " | "
         folium.CircleMarker(location=(power_ukpn_G.nodes[node]["pos"][1],
                                       power_ukpn_G.nodes[node]["pos"][0]),
                             popup=marker_popup_desc,
@@ -78,8 +83,12 @@ def visualiser_power_ukpn():
     for u, v in power_ukpn_G.edges():
         marker_popup_desc = "ID: " + str(u) + "-" + str(v) + " | "
         for attr in power_ukpn_G.edges[u, v].keys():
-            if power_ukpn_G.edges[u, v][attr] not in ["nan", "", "-", np.nan, None]:
-                marker_popup_desc += str(attr) + ": " + str(power_ukpn_G.edges[u, v][attr]) + " | "
+            if isinstance(power_ukpn_G.edges[u, v][attr], cp.Variable):
+                if power_ukpn_G.edges[u, v][attr].value not in ["nan", "", "-", np.nan, None]:
+                    marker_popup_desc += str(attr) + ": " + str(power_ukpn_G.edges[u, v][attr].value) + " | "
+            else:
+                if power_ukpn_G.edges[u, v][attr] not in ["nan", "", "-", np.nan, None]:
+                    marker_popup_desc += str(attr) + ": " + str(power_ukpn_G.edges[u, v][attr]) + " | "
         folium.PolyLine(locations=[(power_ukpn_G.nodes[u]["pos"][1], power_ukpn_G.nodes[u]["pos"][0]),
                                    (power_ukpn_G.nodes[v]["pos"][1], power_ukpn_G.nodes[v]["pos"][0])],
                         popup=marker_popup_desc,
@@ -226,7 +235,7 @@ def visualiser_transport_combined():
 
 
 if __name__ == "__main__":
-    visualiser_power_osm()
-    # visualiser_power_ukpn()
+    # visualiser_power_osm()
+    visualiser_power_ukpn()
     # visualiser_transport_multiplex()
     # visualiser_transport_osm()
