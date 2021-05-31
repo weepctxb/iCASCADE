@@ -48,7 +48,7 @@ def load_transport_multiplex_data():
 
 
 # T.M.1.2 Create networkx graph
-def create_transport_multiplex_graph(nodes, edges, odmat, capac):
+def create_transport_multiplex_graph(nodes, edges):
 
     # T.M.1.2.1 Create graph from edges dataframe
     G = nx.from_pandas_edgelist(edges, source="StationA_ID", target="StationB_ID",
@@ -103,7 +103,13 @@ def create_transport_multiplex_graph(nodes, edges, odmat, capac):
     # T.M.1.2.4 Calculate node sizes
     node_sizes = [int(bb[node] * 1000) for node in bb]
 
-    # T.M.1.2.5 Calculate shortest paths
+    return G, pos, node_sizes
+
+
+# T.M.2.1 Calculate flows for networkx graph
+def flowcalc_transport_multiplex_graph(G, odmat, capac):
+
+    # T.M.2.1.1 Calculate shortest paths
     try:
         with open(r'data/transport_multiplex/flow/shortest_paths.json', 'r') as json_file:
             shortest_paths = json.load(json_file)
@@ -137,7 +143,7 @@ def create_transport_multiplex_graph(nodes, edges, odmat, capac):
         with open(r'data/transport_multiplex/flow/shortest_paths.json', 'w') as json_file:
             json.dump(shortest_paths, json_file)  # indent=2, cls=util.CustomEncoder
 
-    # T.M.1.2.6 Assign baseline flows
+    # T.M.2.1.2 Assign baseline flows
 
     # Initialise flows
     for u, v in G.edges():
@@ -156,7 +162,7 @@ def create_transport_multiplex_graph(nodes, edges, odmat, capac):
                 G.edges[n1, n2]["flow"] += flow_uv
                 # print(n1, n2, flow_uv)  # DEBUG
 
-    # T.M.1.2.7 Assign total node through flows
+    # T.M.2.1.3 Assign total node through flows
     # TODO To test
     for n in G.nodes():
         # Initialise through flows
@@ -173,7 +179,7 @@ def create_transport_multiplex_graph(nodes, edges, odmat, capac):
         odmat_filtered = odmat.loc[odmat["mnlc_d"] == vnlc]
         G.nodes[n]["flow_out"] = sum(odmat_filtered["od_tb_3_perhour"])
 
-    # T.M.1.2.8 Assign flow capacity (and % capacity utilised)
+    # T.M.2.1.4 Assign flow capacity (and % capacity utilised)
     # TODO To test
     for u, v in G.edges():
         unlc = G.nodes[u]["NLC"]
@@ -189,7 +195,7 @@ def create_transport_multiplex_graph(nodes, edges, odmat, capac):
         # print(u, v, flow_cap_uv)  # DEBUG
         # Previously: G.edges[u, v]["flow_cap"] = LOAD_CAP * G.edges[u, v]["flow"]
 
-    # T.M.1.2.9 Assign node capacity (and % capacity utilised)
+    # T.M.2.1.5 Assign node capacity (and % capacity utilised)
     # TODO To test
     for n in G.nodes():
         # Initialise capacities
@@ -200,18 +206,18 @@ def create_transport_multiplex_graph(nodes, edges, odmat, capac):
     for n in G.nodes():
         G.nodes[n]["pct_thruflow_cap"] = G.nodes[n]["thruflow"] / G.nodes[n]["thruflow_cap"]
 
-    return G, pos, node_sizes
+    return G
 
 
 def flow_check(G):
     for u, v in G.edges():
         if (G.edges[u, v]["flow"] > G.edges[u, v]["flow_cap"]) \
                 or (G.edges[u, v]["flow"] == 0) or (G.edges[u, v]["flow_cap"] == 0):
-            print(u, v, G.edges[u, v]["flow"], G.edges[u, v]["flow_cap"])
+            print("Link Warning: ", u, v, G.edges[u, v]["flow"], G.edges[u, v]["flow_cap"])
     for n in G.nodes():
         if (G.nodes[n]["thruflow"] > G.nodes[n]["thruflow_cap"]) \
                 or (G.nodes[n]["thruflow"] == 0) or (G.nodes[n]["thruflow_cap"] == 0):
-            print(n, G.nodes[n]["thruflow"], G.nodes[n]["thruflow_cap"])
+            print("Node Warning: ", n, G.nodes[n]["thruflow"], G.nodes[n]["thruflow_cap"])
 
 
 def plot_degree_histogram(G):
@@ -240,14 +246,25 @@ if __name__ == "__main__":
     try:
         G = pickle.load(open(r'data/transport_multiplex/out/transport_multiplex_G.pkl', "rb"))
     except IOError:
-        nodes, edges, odmat, capac = load_transport_multiplex_data()
-        G, pos, node_sizes = create_transport_multiplex_graph(nodes, edges, odmat, capac)
+        nodes, edges, _, _ = load_transport_multiplex_data()
+        G, pos, node_sizes = create_transport_multiplex_graph(nodes, edges)
         try:
             pickle.dump(G, open(r'data/transport_multiplex/out/transport_multiplex_G.pkl', 'wb+'))
         except FileNotFoundError as e:
             print(e)
 
-    # T.M.2 Export graph nodelist
+    # T.M.2 Calculate baseline flows and flow capacities
+    try:
+        G_flow = pickle.load(open(r'data/transport_multiplex/out/transport_multiplex_G_flow.pkl', "rb"))
+    except IOError:
+        _, _, odmat, capac = load_transport_multiplex_data()
+        G_flow = flowcalc_transport_multiplex_graph(G, odmat, capac)
+        try:
+            pickle.dump(G_flow, open(r'data/transport_multiplex/out/transport_multiplex_G_flow.pkl', 'wb+'))
+        except FileNotFoundError as e:
+            print(e)
+
+    # T.M.3 Export graph nodelist
     try:
         combined_nodelist = pd.DataFrame([i[1] for i in G.nodes(data=True)], index=[i[0] for i in G.nodes(data=True)])
         combined_nodelist = combined_nodelist.rename_axis('full_id')
@@ -255,14 +272,14 @@ if __name__ == "__main__":
     except Exception as e:
         print(e)
 
-    # T.M.3 Export adjacency matrix
+    # T.M.4 Export adjacency matrix
     try:
         combined_adjmat = nx.adjacency_matrix(G, nodelist=None, weight="weight")  # gives scipy sparse matrix
         sparse.save_npz(r'data/transport_multiplex/out/transport_multiplex_adjmat.npz', combined_adjmat)
     except Exception as e:
         print(e)
 
-    # T.M.4 Export graph edgelist
+    # T.M.5 Export graph edgelist
     try:
         edgelist = pd.DataFrame(columns=["StationA_ID", "StationA", "StationB_ID", "StationB", "flow", "flow_cap",
                                          "pct_flow_cap"])
@@ -276,10 +293,10 @@ if __name__ == "__main__":
     except Exception as e:
         print(e)
 
-    # DEBUG T.M.X Check flows
+    # T.M.6 Check flows
     flow_check(G)
 
-    # T.M.5 Add colours and export map plot
+    # T.M.7 Add colours and export map plot
     node_colors = [TRANSPORT_COLORS.get(G.nodes[node]["line"], "#FF0000") for node in G.nodes()]
     edge_lines = nx.get_edge_attributes(G, "Line")
     edge_colors = [TRANSPORT_COLORS.get(edge_lines[u, v], "#808080") for u, v in G.edges()]
