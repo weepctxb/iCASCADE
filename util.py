@@ -87,7 +87,7 @@ def douglas_peucker(linenodes, eps=POWER_LINE_PP_EPS):
 
 
 def weakly_connected_component_subgraphs(G, copy=True):
-    """Generate weakly connected components as subgraphs.
+    """[Copied from deprecated version of networkx library] Generate weakly connected components as subgraphs.
 
     Parameters
     ----------
@@ -137,12 +137,26 @@ def weakly_connected_component_subgraphs(G, copy=True):
 
 # TODO Proof-of-concept, not tested yet
 def cluster(G, nodes_to_cluster):
-    G1 = G
-    for node in nodes_to_cluster[1:]:
-        G1 = nx.contracted_nodes(G1, nodes_to_cluster[0], node, self_loops=False, copy=True)
+    # Nomenclature: (rest of network-x)-a-b-c-(y-rest of network)
+    G1 = G.copy()  # deepcopy
+    G.add_node("-".join([str(n) for n in nodes_to_cluster]),
+               pos=(np.average([G.nodes()[n]["pos"][0] for n in nodes_to_cluster]),
+                    np.average([G.nodes()[n]["pos"][1] for n in nodes_to_cluster])),
+               nodeLabel="-".join([G.nodes()[n]["nodeLabel"] for n in nodes_to_cluster]),
+               interchange=False,
+               line="-".join(np.unique([G.nodes()[n]["line"] for n in nodes_to_cluster])),
+               NLC="-".join([str(G.nodes()[n]["NLC"]) for n in nodes_to_cluster]),
+               railway="station",
+               flow_in=sum([G.nodes()[n]["flow_in"] for n in nodes_to_cluster]),
+               flow_out=sum([G.nodes()[n]["flow_out"] for n in nodes_to_cluster])
+               # thruflow=sum([G.nodes()[n]["thruflow"] for n in nodes_to_cluster]),  # TODO
+               # thruflow_cap=sum([G.nodes()[n]["thruflow_cap"] for n in nodes_to_cluster])  # TODO
+               )
+    x = None  # TODO - node x attached to a
+    y = None  # TODO - node y attached to c
+    G1.add_edge(x, "-".join([str(n) for n in nodes_to_cluster]))  # TODO edge attributes
+    G1.add_edge("-".join([str(n) for n in nodes_to_cluster]), y)  # TODO edge attributes
+    # for node in nodes_to_cluster[1:]:
+    #     G1 = nx.contracted_nodes(G1, nodes_to_cluster[0], node, self_loops=False, copy=True)
     return G1
-
-
-# TODO Flow balancing for electricity network
-
 

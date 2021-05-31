@@ -164,6 +164,14 @@ def create_transport_multiplex_graph(nodes, edges, odmat, capac):
         # Calculate through flows
         for ne in G.neighbors(n):
             G.nodes[n]["thruflow"] += G.edges[n, ne]["flow"]
+        # Initialise inflows
+        unlc = G.nodes[int(n)]["NLC"]
+        odmat_filtered = odmat.loc[odmat["mnlc_o"] == unlc]
+        G.nodes[n]["flow_in"] = sum(odmat_filtered["od_tb_3_perhour"])
+        # Initialise outflows
+        vnlc = G.nodes[int(n)]["NLC"]
+        odmat_filtered = odmat.loc[odmat["mnlc_d"] == vnlc]
+        G.nodes[n]["flow_out"] = sum(odmat_filtered["od_tb_3_perhour"])
 
     # T.M.1.2.8 Assign flow capacity (and % capacity utilised)
     # TODO To test
