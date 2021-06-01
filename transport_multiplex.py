@@ -81,13 +81,13 @@ def create_transport_multiplex_graph(nodes, edges, odmat, capac):
 
     # T.M.1.2.3 Calculate and assign centralities
     # dd = nx.degree_centrality(G)
-    bb = nx.betweenness_centrality(G, normalized=True, weight=True)
-    # cc = nx.closeness_centrality(G, distance="running_time_min")  # previously "Distance"
+    bb = nx.betweenness_centrality(G, normalized=True, weight="running_time_min")
+    cc = nx.closeness_centrality(G, distance="running_time_min")  # previously "Distance"
     # ee = nx.eigenvector_centrality(G, max_iter=1000)
 
     # nx.set_node_attributes(G, dd, 'degree')
     nx.set_node_attributes(G, bb, 'betweenness')
-    # nx.set_node_attributes(G, cc, 'closeness')
+    nx.set_node_attributes(G, cc, 'closeness')
     # nx.set_node_attributes(G, ee, 'eigenvector')
 
     # nodes['degree'] = None
@@ -98,8 +98,8 @@ def create_transport_multiplex_graph(nodes, edges, odmat, capac):
     #     nodes.at[node, 'degree'] = dd[node]
     for node in bb:
         nodes.at[node, 'betweenness'] = bb[node]
-    # for node in cc:
-    #     nodes.at[node, 'closeness'] = cc[node]
+    for node in cc:
+        nodes.at[node, 'closeness'] = cc[node]
     # for node in ee:
     #     nodes.at[node, 'eigenvector'] = ee[node]
 
@@ -273,7 +273,7 @@ if __name__ == "__main__":
         except FileNotFoundError as e:
             print(e)
 
-    # T.M.2 Calculate baseline flows and flow capacities
+    # T.M.2 Calculate baseline flows
     try:
         G_flow = pickle.load(open(r'data/transport_multiplex/out/transport_multiplex_G_flow.pkl', "rb"))
     except IOError:
@@ -297,34 +297,34 @@ if __name__ == "__main__":
     # T.M.x Check flows
     flow_check(G_skele)
 
-    # # T.M.3 Export graph nodelist
-    # try:
-    #     combined_nodelist = pd.DataFrame([i[1] for i in G.nodes(data=True)], index=[i[0] for i in G.nodes(data=True)])
-    #     combined_nodelist = combined_nodelist.rename_axis('full_id')
-    #     combined_nodelist.to_excel(r'data/transport_multiplex/out/transport_multiplex_nodelist.xlsx', index=True)
-    # except Exception as e:
-    #     print(e)
-    #
-    # # T.M.4 Export adjacency matrix
-    # try:
-    #     combined_adjmat = nx.adjacency_matrix(G, nodelist=None, weight="weight")  # gives scipy sparse matrix
-    #     sparse.save_npz(r'data/transport_multiplex/out/transport_multiplex_adjmat.npz', combined_adjmat)
-    # except Exception as e:
-    #     print(e)
-    #
-    # # T.M.5 Export graph edgelist
-    # try:
-    #     edgelist = pd.DataFrame(columns=["StationA_ID", "StationA", "StationB_ID", "StationB", "flow", "flow_cap",
-    #                                      "pct_flow_cap"])
-    #     for u, v in G.edges():
-    #         series_obj = pd.Series([u, G.edges[u, v]["StationA"], v, G.edges[u, v]["StationB"],
-    #                                 G.edges[u, v]["flow"], G.edges[u, v]["flow_cap"],
-    #                                 G.edges[u, v]["pct_flow_cap"]],
-    #                                index=edgelist.columns)
-    #         edgelist = edgelist.append(series_obj, ignore_index=True)
-    #     edgelist.to_excel(r'data/transport_multiplex/out/transport_multiplex_edgelist.xlsx', index=True)
-    # except Exception as e:
-    #     print(e)
+    # T.M.3 Export graph nodelist
+    try:
+        combined_nodelist = pd.DataFrame([i[1] for i in G_skele.nodes(data=True)], index=[i[0] for i in G_skele.nodes(data=True)])
+        combined_nodelist = combined_nodelist.rename_axis('full_id')
+        combined_nodelist.to_excel(r'data/transport_multiplex/out/transport_multiplex_nodelist.xlsx', index=True)
+    except Exception as e:
+        print(e)
+
+    # T.M.4 Export adjacency matrix
+    try:
+        combined_adjmat = nx.adjacency_matrix(G_skele, nodelist=None, weight="weight")  # gives scipy sparse matrix
+        sparse.save_npz(r'data/transport_multiplex/out/transport_multiplex_adjmat.npz', combined_adjmat)
+    except Exception as e:
+        print(e)
+
+    # T.M.5 Export graph edgelist
+    try:
+        edgelist = pd.DataFrame(columns=["StationA_ID", "StationA", "StationB_ID", "StationB", "flow", "flow_cap",
+                                         "pct_flow_cap"])
+        for u, v in G_skele.edges():
+            series_obj = pd.Series([u, G_skele.edges[u, v]["StationA"], v, G_skele.edges[u, v]["StationB"],
+                                    G_skele.edges[u, v]["flow"], G_skele.edges[u, v]["flow_cap"],
+                                    G_skele.edges[u, v]["pct_flow_cap"]],
+                                   index=edgelist.columns)
+            edgelist = edgelist.append(series_obj, ignore_index=True)
+        edgelist.to_excel(r'data/transport_multiplex/out/transport_multiplex_edgelist.xlsx', index=True)
+    except Exception as e:
+        print(e)
 
     # T.M.7 Add colours and export map plot
     node_colors = [TRANSPORT_COLORS.get(G_skele.nodes[node]["line"], "#FF0000") for node in G_skele.nodes()]

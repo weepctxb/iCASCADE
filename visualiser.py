@@ -54,7 +54,7 @@ def visualiser_power_osm():
 
 def visualiser_power_ukpn():
 
-    power_ukpn_G = pickle.load(open(r'data/power_ukpn/out/power_UKPN_G.pkl', "rb"))
+    power_ukpn_G = pickle.load(open(r'data/power_ukpn/out/power_ukpn_G_flow.pkl', "rb"))
 
     london_power_ukpn_map = folium.Map(location=LONDON_COORDS, zoom_start=10, prefer_canvas=True)
 
@@ -108,7 +108,7 @@ def visualiser_power_ukpn():
 
 def visualiser_transport_multiplex():
 
-    transport_multiplex_G = pickle.load(open(r'data/transport_multiplex/out/transport_multiplex_G.pkl', "rb"))
+    transport_multiplex_G = pickle.load(open(r'data/transport_multiplex/out/transport_multiplex_G_flow.pkl', "rb"))
 
     london_transport_multiplex_map = folium.Map(location=LONDON_COORDS, zoom_start=10, prefer_canvas=True)
 
@@ -237,5 +237,5 @@ def visualiser_transport_combined():
 if __name__ == "__main__":
     # visualiser_power_osm()
     visualiser_power_ukpn()
-    # visualiser_transport_multiplex()
+    visualiser_transport_multiplex()
     # visualiser_transport_osm()
