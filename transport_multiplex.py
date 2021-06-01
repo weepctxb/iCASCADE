@@ -10,6 +10,9 @@ from globalparams import TRANSPORT_COLORS, LOAD_CAP
 
 
 # T.M.1.1 Load nodes and edges data
+from util import linear_cluster
+
+
 def load_transport_multiplex_data():
 
     # T.M.1.1.1 Load nodes
@@ -48,7 +51,7 @@ def load_transport_multiplex_data():
 
 
 # T.M.1.2 Create networkx graph
-def create_transport_multiplex_graph(nodes, edges):
+def create_transport_multiplex_graph(nodes, edges, odmat, capac):
 
     # T.M.1.2.1 Create graph from edges dataframe
     G = nx.from_pandas_edgelist(edges, source="StationA_ID", target="StationB_ID",
@@ -77,31 +80,60 @@ def create_transport_multiplex_graph(nodes, edges):
     nx.set_node_attributes(G, "station", 'railway')
 
     # T.M.1.2.3 Calculate and assign centralities
-    dd = nx.degree_centrality(G)
+    # dd = nx.degree_centrality(G)
     bb = nx.betweenness_centrality(G, normalized=True, weight=True)
-    cc = nx.closeness_centrality(G, distance="running_time_min")  # previously "Distance"
-    ee = nx.eigenvector_centrality(G, max_iter=1000)
+    # cc = nx.closeness_centrality(G, distance="running_time_min")  # previously "Distance"
+    # ee = nx.eigenvector_centrality(G, max_iter=1000)
 
-    nx.set_node_attributes(G, dd, 'degree')
+    # nx.set_node_attributes(G, dd, 'degree')
     nx.set_node_attributes(G, bb, 'betweenness')
-    nx.set_node_attributes(G, cc, 'closeness')
-    nx.set_node_attributes(G, ee, 'eigenvector')
+    # nx.set_node_attributes(G, cc, 'closeness')
+    # nx.set_node_attributes(G, ee, 'eigenvector')
 
-    nodes['degree'] = None
-    nodes['betweenness'] = None
-    nodes['closeness'] = None
-    nodes['eigenvector'] = None
-    for node in dd:
-        nodes.at[node, 'degree'] = dd[node]
+    # nodes['degree'] = None
+    # nodes['betweenness'] = None
+    # nodes['closeness'] = None
+    # nodes['eigenvector'] = None
+    # for node in dd:
+    #     nodes.at[node, 'degree'] = dd[node]
     for node in bb:
         nodes.at[node, 'betweenness'] = bb[node]
-    for node in cc:
-        nodes.at[node, 'closeness'] = cc[node]
-    for node in ee:
-        nodes.at[node, 'eigenvector'] = ee[node]
+    # for node in cc:
+    #     nodes.at[node, 'closeness'] = cc[node]
+    # for node in ee:
+    #     nodes.at[node, 'eigenvector'] = ee[node]
 
     # T.M.1.2.4 Calculate node sizes
     node_sizes = [int(bb[node] * 1000) for node in bb]
+
+    # T.M.1.2.x Assign node inflows and outflpws
+    for n in G.nodes():
+        # FIXME patch - keys in json are in strings for some reason (JSON encoder issue)
+        nnlc = G.nodes[n]["NLC"]
+        odmat_filtered_in = odmat.loc[odmat["mnlc_o"] == nnlc]
+        G.nodes[n]["flow_in"] = sum(odmat_filtered_in["od_tb_3_perhour"])
+        odmat_filtered_out = odmat.loc[odmat["mnlc_d"] == nnlc]
+        G.nodes[n]["flow_out"] = sum(odmat_filtered_out["od_tb_3_perhour"])
+
+    # T.M.1.2.5 Assign link flow capacities
+    for u, v in G.edges():
+        unlc = G.nodes[u]["NLC"]
+        vnlc = G.nodes[v]["NLC"]
+        capac_filtered_1 = pd.concat([capac.loc[capac["StationA_NLC"] == unlc],
+                                    capac.loc[capac["StationA_NLC"] == vnlc]], join="outer")
+        capac_filtered = pd.concat([capac_filtered_1.loc[capac_filtered_1["StationB_NLC"] == vnlc],
+                                    capac_filtered_1.loc[capac_filtered_1["StationB_NLC"] == unlc]], join="outer")
+        flow_cap_uv = np.dot(capac_filtered["train_capacity"],
+                             capac_filtered["train_freq_tb_3_perhour"])
+        G.edges[u, v]["flow_cap"] = flow_cap_uv
+
+    # T.M.1.2.6 Assign node thruflow capacities
+    for n in G.nodes():
+        # Initialise capacities
+        G.nodes[n]["thruflow_cap"] = 0
+        # Calculate capacities as sum of flow capacities of neighbouring links
+        for ne in G.neighbors(n):
+            G.nodes[n]["thruflow_cap"] += G.edges[n, ne]["flow_cap"]
 
     return G, pos, node_sizes
 
@@ -143,15 +175,11 @@ def flowcalc_transport_multiplex_graph(G, odmat, capac):
         with open(r'data/transport_multiplex/flow/shortest_paths.json', 'w') as json_file:
             json.dump(shortest_paths, json_file)  # indent=2, cls=util.CustomEncoder
 
-    # T.M.2.1.2 Assign baseline flows
-
-    # Initialise flows
+    # T.M.2.1.2 Assign baseline link flows
     for u, v in G.edges():
         G.edges[u, v]["flow"] = 0
-
-    # Assign flows
     for u in shortest_paths:
-        # FIXME patch - keys in json are in strings for some reason
+        # FIXME patch - keys in json are in strings for some reason (JSON encoder issue)
         unlc = G.nodes[int(u)]["NLC"]
         for v in shortest_paths[u]:
             vnlc = G.nodes[int(v)]["NLC"]
@@ -162,53 +190,46 @@ def flowcalc_transport_multiplex_graph(G, odmat, capac):
                 G.edges[n1, n2]["flow"] += flow_uv
                 # print(n1, n2, flow_uv)  # DEBUG
 
-    # T.M.2.1.3 Assign total node through flows
-    # TODO To test
+    # T.M.2.1.3 Assign baseline node thruflows
     for n in G.nodes():
         # Initialise through flows
         G.nodes[n]["thruflow"] = 0
         # Calculate through flows
         for ne in G.neighbors(n):
             G.nodes[n]["thruflow"] += G.edges[n, ne]["flow"]
-        # Initialise inflows
-        unlc = G.nodes[int(n)]["NLC"]
-        odmat_filtered = odmat.loc[odmat["mnlc_o"] == unlc]
-        G.nodes[n]["flow_in"] = sum(odmat_filtered["od_tb_3_perhour"])
-        # Initialise outflows
-        vnlc = G.nodes[int(n)]["NLC"]
-        odmat_filtered = odmat.loc[odmat["mnlc_d"] == vnlc]
-        G.nodes[n]["flow_out"] = sum(odmat_filtered["od_tb_3_perhour"])
 
-    # T.M.2.1.4 Assign flow capacity (and % capacity utilised)
-    # TODO To test
+    # T.M.2.1.4 Assign baseline link flow % capacity utilised
     for u, v in G.edges():
-        unlc = G.nodes[u]["NLC"]
-        vnlc = G.nodes[v]["NLC"]
-        capac_filtered_1 = pd.concat([capac.loc[capac["StationA_NLC"] == unlc],
-                                    capac.loc[capac["StationA_NLC"] == vnlc]], join="outer")
-        capac_filtered = pd.concat([capac_filtered_1.loc[capac_filtered_1["StationB_NLC"] == vnlc],
-                                    capac_filtered_1.loc[capac_filtered_1["StationB_NLC"] == unlc]], join="outer")
-        flow_cap_uv = np.dot(capac_filtered["train_capacity"],
-                             capac_filtered["train_freq_tb_3_perhour"])
-        G.edges[u, v]["flow_cap"] = flow_cap_uv
         G.edges[u, v]["pct_flow_cap"] = G.edges[u, v]["flow"] / G.edges[u, v]["flow_cap"]
-        # print(u, v, flow_cap_uv)  # DEBUG
-        # Previously: G.edges[u, v]["flow_cap"] = LOAD_CAP * G.edges[u, v]["flow"]
 
-    # T.M.2.1.5 Assign node capacity (and % capacity utilised)
-    # TODO To test
-    for n in G.nodes():
-        # Initialise capacities
-        G.nodes[n]["thruflow_cap"] = 0
-        # Calculate capacities as sum of flow capacities of neighbouring links
-        for ne in G.neighbors(n):
-            G.nodes[n]["thruflow_cap"] += G.edges[n, ne]["flow_cap"]
+    # T.M.2.1.5 Assign baseline node thruflow % capacity utilised
     for n in G.nodes():
         G.nodes[n]["pct_thruflow_cap"] = G.nodes[n]["thruflow"] / G.nodes[n]["thruflow_cap"]
 
     return G
 
 
+# T.M.x Simplify network
+def simplify_transport_multiplex_graph(G):
+    adj_nonitc_path_list = list()
+    for u, v in G.edges():
+        if (G.nodes[u]["interchange"] == False) and (G.nodes[v]["interchange"] == False) \
+                and (G.degree[u] == 2) and (G.degree[v] == 2):
+            u_nb = [n for n in G.neighbors(u) if n != v and G.degree[n] == 2]
+            v_nb = [n for n in G.neighbors(v) if n != u and G.degree[n] == 2]
+            if len([u, v] + v_nb) == 3:
+                adj_nonitc_path_list.extend([[u, v] + v_nb])
+            elif len(u_nb + [u, v]) == 3:
+                adj_nonitc_path_list.extend([u_nb + [u, v]])
+    for tri in adj_nonitc_path_list:
+        try:
+            G = linear_cluster(G, tri)
+        except nx.NetworkXError:  # because nodes may have already been clustered from previous iteration
+            continue
+    return G
+
+
+# T.M.x Check flows
 def flow_check(G):
     for u, v in G.edges():
         if (G.edges[u, v]["flow"] > G.edges[u, v]["flow_cap"]) \
@@ -219,25 +240,24 @@ def flow_check(G):
                 or (G.nodes[n]["thruflow"] == 0) or (G.nodes[n]["thruflow_cap"] == 0):
             print("Node Warning: ", n, G.nodes[n]["thruflow"], G.nodes[n]["thruflow_cap"])
 
-
-def plot_degree_histogram(G):
-
-    degree_freq = nx.degree_histogram(G)
-    degrees = range(len(degree_freq))
-    plt.loglog(degrees[:], degree_freq[:], 'go-')
-    plt.xlabel('Degree')
-    plt.ylabel('Frequency')
-    plt.show()
-
-    weighted_degrees = []
-    for n in G.nodes():
-        dist = sum(edges.loc[edges["StationA_ID"] == n]["Distance"]) + sum(
-            edges.loc[edges["StationB_ID"] == n]["Distance"])
-        weighted_degrees.append(round(dist * 1000))
-    n, bins, patches = plt.hist(weighted_degrees, bins=100)
-    plt.clf()
-    plt.loglog(bins[:-1], n[:], ".")
-    plt.show()
+# def plot_degree_histogram(G):
+#
+#     degree_freq = nx.degree_histogram(G)
+#     degrees = range(len(degree_freq))
+#     plt.loglog(degrees[:], degree_freq[:], 'go-')
+#     plt.xlabel('Degree')
+#     plt.ylabel('Frequency')
+#     plt.show()
+#
+#     weighted_degrees = []
+#     for n in G.nodes():
+#         dist = sum(edges.loc[edges["StationA_ID"] == n]["Distance"]) + sum(
+#             edges.loc[edges["StationB_ID"] == n]["Distance"])
+#         weighted_degrees.append(round(dist * 1000))
+#     n, bins, patches = plt.hist(weighted_degrees, bins=100)
+#     plt.clf()
+#     plt.loglog(bins[:-1], n[:], ".")
+#     plt.show()
 
 
 if __name__ == "__main__":
@@ -246,8 +266,8 @@ if __name__ == "__main__":
     try:
         G = pickle.load(open(r'data/transport_multiplex/out/transport_multiplex_G.pkl', "rb"))
     except IOError:
-        nodes, edges, _, _ = load_transport_multiplex_data()
-        G, pos, node_sizes = create_transport_multiplex_graph(nodes, edges)
+        nodes, edges, odmat, capac = load_transport_multiplex_data()
+        G, pos, node_sizes = create_transport_multiplex_graph(nodes, edges, odmat, capac)
         try:
             pickle.dump(G, open(r'data/transport_multiplex/out/transport_multiplex_G.pkl', 'wb+'))
         except FileNotFoundError as e:
@@ -264,44 +284,54 @@ if __name__ == "__main__":
         except FileNotFoundError as e:
             print(e)
 
-    # T.M.3 Export graph nodelist
+    # T.M.x Simplify network
     try:
-        combined_nodelist = pd.DataFrame([i[1] for i in G.nodes(data=True)], index=[i[0] for i in G.nodes(data=True)])
-        combined_nodelist = combined_nodelist.rename_axis('full_id')
-        combined_nodelist.to_excel(r'data/transport_multiplex/out/transport_multiplex_nodelist.xlsx', index=True)
-    except Exception as e:
-        print(e)
+        G_skele = pickle.load(open(r'data/transport_multiplex/out/transport_multiplex_G_flow_skele.pkl', "rb"))
+    except IOError:
+        G_skele = simplify_transport_multiplex_graph(G_flow)
+        try:
+            pickle.dump(G_skele, open(r'data/transport_multiplex/out/transport_multiplex_G_flow_skele.pkl', 'wb+'))
+        except FileNotFoundError as e:
+            print(e)
 
-    # T.M.4 Export adjacency matrix
-    try:
-        combined_adjmat = nx.adjacency_matrix(G, nodelist=None, weight="weight")  # gives scipy sparse matrix
-        sparse.save_npz(r'data/transport_multiplex/out/transport_multiplex_adjmat.npz', combined_adjmat)
-    except Exception as e:
-        print(e)
+    # T.M.x Check flows
+    flow_check(G_skele)
 
-    # T.M.5 Export graph edgelist
-    try:
-        edgelist = pd.DataFrame(columns=["StationA_ID", "StationA", "StationB_ID", "StationB", "flow", "flow_cap",
-                                         "pct_flow_cap"])
-        for u, v in G.edges():
-            series_obj = pd.Series([u, G.edges[u, v]["StationA"], v, G.edges[u, v]["StationB"],
-                                    G.edges[u, v]["flow"], G.edges[u, v]["flow_cap"],
-                                    G.edges[u, v]["pct_flow_cap"]],
-                                   index=edgelist.columns)
-            edgelist = edgelist.append(series_obj, ignore_index=True)
-        edgelist.to_excel(r'data/transport_multiplex/out/transport_multiplex_edgelist.xlsx', index=True)
-    except Exception as e:
-        print(e)
-
-    # T.M.6 Check flows
-    flow_check(G)
+    # # T.M.3 Export graph nodelist
+    # try:
+    #     combined_nodelist = pd.DataFrame([i[1] for i in G.nodes(data=True)], index=[i[0] for i in G.nodes(data=True)])
+    #     combined_nodelist = combined_nodelist.rename_axis('full_id')
+    #     combined_nodelist.to_excel(r'data/transport_multiplex/out/transport_multiplex_nodelist.xlsx', index=True)
+    # except Exception as e:
+    #     print(e)
+    #
+    # # T.M.4 Export adjacency matrix
+    # try:
+    #     combined_adjmat = nx.adjacency_matrix(G, nodelist=None, weight="weight")  # gives scipy sparse matrix
+    #     sparse.save_npz(r'data/transport_multiplex/out/transport_multiplex_adjmat.npz', combined_adjmat)
+    # except Exception as e:
+    #     print(e)
+    #
+    # # T.M.5 Export graph edgelist
+    # try:
+    #     edgelist = pd.DataFrame(columns=["StationA_ID", "StationA", "StationB_ID", "StationB", "flow", "flow_cap",
+    #                                      "pct_flow_cap"])
+    #     for u, v in G.edges():
+    #         series_obj = pd.Series([u, G.edges[u, v]["StationA"], v, G.edges[u, v]["StationB"],
+    #                                 G.edges[u, v]["flow"], G.edges[u, v]["flow_cap"],
+    #                                 G.edges[u, v]["pct_flow_cap"]],
+    #                                index=edgelist.columns)
+    #         edgelist = edgelist.append(series_obj, ignore_index=True)
+    #     edgelist.to_excel(r'data/transport_multiplex/out/transport_multiplex_edgelist.xlsx', index=True)
+    # except Exception as e:
+    #     print(e)
 
     # T.M.7 Add colours and export map plot
-    node_colors = [TRANSPORT_COLORS.get(G.nodes[node]["line"], "#FF0000") for node in G.nodes()]
-    edge_lines = nx.get_edge_attributes(G, "Line")
-    edge_colors = [TRANSPORT_COLORS.get(edge_lines[u, v], "#808080") for u, v in G.edges()]
+    node_colors = [TRANSPORT_COLORS.get(G_skele.nodes[node]["line"], "#FF0000") for node in G_skele.nodes()]
+    edge_lines = nx.get_edge_attributes(G_skele, "Line")
+    edge_colors = [TRANSPORT_COLORS.get(edge_lines[u, v], "#808080") for u, v in G_skele.edges()]
 
-    nx.draw(G, pos=nx.get_node_attributes(G, 'pos'), node_size=5,
+    nx.draw(G_skele, pos=nx.get_node_attributes(G_skele, 'pos'), node_size=5,
             node_color=node_colors, edge_color=edge_colors)
     plt.savefig("data/transport_multiplex/img/transport_multiplex.png")
     plt.savefig("data/transport_multiplex/img/transport_multiplex.svg")

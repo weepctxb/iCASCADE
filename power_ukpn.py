@@ -405,6 +405,17 @@ def create_power_ukpn_graph(gisnode, circuit, trans2w, trans3w, loads, geners):
     return G
 
 
+def flow_check(G):
+    for u, v in G.edges():
+        if (G.edges[u, v]["flow"] > G.edges[u, v]["flow_cap"]) \
+                or (G.edges[u, v]["flow"] == 0) or (G.edges[u, v]["flow_cap"] == 0):
+            print("Link Warning: ", u, v, G.edges[u, v]["flow"], G.edges[u, v]["flow_cap"])
+    for n in G.nodes():
+        if (G.nodes[n]["thruflow"] > G.nodes[n]["thruflow_cap"]) \
+                or (G.nodes[n]["thruflow"] == 0) or (G.nodes[n]["thruflow_cap"] == 0):
+            print("Node Warning: ", n, G.nodes[n]["thruflow"], G.nodes[n]["thruflow_cap"])
+
+
 if __name__ == "__main__":
 
     # P.U.1 Load networkx graph
@@ -434,7 +445,10 @@ if __name__ == "__main__":
     except Exception as e:
         print(e)
 
-    # P.U.4 Add colours and export map plot
+    # P.U.4 Flow check
+    flow_check(G)
+
+    # P.U.5 Add colours and export map plot
     node_colors = [POWER_COLORS.get(G.nodes[node]["type"], "#000000") for node in G.nodes()]
     edge_colors = [POWER_COLORS.get("cable", "#000000") for u, v in G.edges()]  # FYI assumes underground cable
 

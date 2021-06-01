@@ -135,27 +135,70 @@ def weakly_connected_component_subgraphs(G, copy=True):
             yield G.subgraph(comp)
 
 
-# TODO Proof-of-concept, not tested yet
-def cluster(G, nodes_to_cluster):
+def linear_cluster(G, nodes_to_cluster):
     # Nomenclature: (rest of network-x)-a-b-c-(y-rest of network)
     G1 = G.copy()  # deepcopy
-    G.add_node("-".join([str(n) for n in nodes_to_cluster]),
-               pos=(np.average([G.nodes()[n]["pos"][0] for n in nodes_to_cluster]),
-                    np.average([G.nodes()[n]["pos"][1] for n in nodes_to_cluster])),
-               nodeLabel="-".join([G.nodes()[n]["nodeLabel"] for n in nodes_to_cluster]),
-               interchange=False,
-               line="-".join(np.unique([G.nodes()[n]["line"] for n in nodes_to_cluster])),
-               NLC="-".join([str(G.nodes()[n]["NLC"]) for n in nodes_to_cluster]),
-               railway="station",
-               flow_in=sum([G.nodes()[n]["flow_in"] for n in nodes_to_cluster]),
-               flow_out=sum([G.nodes()[n]["flow_out"] for n in nodes_to_cluster])
-               # thruflow=sum([G.nodes()[n]["thruflow"] for n in nodes_to_cluster]),  # TODO
-               # thruflow_cap=sum([G.nodes()[n]["thruflow_cap"] for n in nodes_to_cluster])  # TODO
-               )
-    x = None  # TODO - node x attached to a
-    y = None  # TODO - node y attached to c
-    G1.add_edge(x, "-".join([str(n) for n in nodes_to_cluster]))  # TODO edge attributes
-    G1.add_edge("-".join([str(n) for n in nodes_to_cluster]), y)  # TODO edge attributes
+    nnew = "-".join([str(n) for n in nodes_to_cluster])
+
+    nb_left = [n for n in G1.neighbors(nodes_to_cluster[0]) if n != nodes_to_cluster[1]]
+    nb_right = [n for n in G1.neighbors(nodes_to_cluster[-1]) if n != nodes_to_cluster[-2]]
+
+    G1.add_node("-".join([str(n) for n in nodes_to_cluster]),
+                pos=(np.average([G1.nodes[n]["pos"][0] for n in nodes_to_cluster]),
+                     np.average([G1.nodes[n]["pos"][1] for n in nodes_to_cluster])),
+                nodeLabel="-".join([G1.nodes[n]["nodeLabel"] for n in nodes_to_cluster]),
+                interchange=False,
+                line="-".join(np.unique([G1.nodes[n]["line"] for n in nodes_to_cluster])),
+                NLC="-".join([str(G1.nodes[n]["NLC"]) for n in nodes_to_cluster]),
+                railway="station",
+                flow_in=sum([G1.nodes[n]["flow_in"] for n in nodes_to_cluster]),
+                flow_out=sum([G1.nodes[n]["flow_out"] for n in nodes_to_cluster]),
+                thruflow=G1.edges[nb_left[-1], nodes_to_cluster[0]]["flow"] +
+                         G1.edges[nodes_to_cluster[-1], nb_right[0]]["flow"],
+                thruflow_cap=G1.edges[nb_left[-1], nodes_to_cluster[0]]["flow_cap"] +
+                             G1.edges[nodes_to_cluster[-1], nb_right[0]]["flow_cap"],
+                pct_thruflow_cap=(G1.edges[nb_left[-1], nodes_to_cluster[0]]["flow"] +
+                                  G1.edges[nodes_to_cluster[-1], nb_right[0]]["flow"]) /
+                                 (G1.edges[nb_left[-1], nodes_to_cluster[0]]["flow_cap"] +
+                                  G1.edges[nodes_to_cluster[-1], nb_right[0]]["flow_cap"])
+                )
+
+    for nleft in nb_left:  # actually it will be the case that len(nb_left) == 1
+        G1.add_edge(nleft, nnew,
+                    Line="-".join(np.unique([G1.edges[n1, n2]["Line"]
+                                             for n1, n2 in zip(nodes_to_cluster[:-1], nodes_to_cluster[1:])])),
+                    StationA=nleft, StationB=nnew,
+                    Distance=G1.edges[nleft, nodes_to_cluster[0]]["Distance"] +
+                             sum([G1.edges[n1, n2]["Distance"]
+                                  for n1, n2 in zip(nodes_to_cluster[:-1], nodes_to_cluster[1:])]) / 2,
+                    running_time_min=G1.edges[nleft, nodes_to_cluster[0]]["running_time_min"] +
+                                     sum([G1.edges[n1, n2]["running_time_min"]
+                                          for n1, n2 in zip(nodes_to_cluster[:-1], nodes_to_cluster[1:])]) / 2,
+                    flow=G1.edges[nleft, nodes_to_cluster[0]]["flow"],
+                    flow_cap=G1.edges[nleft, nodes_to_cluster[0]]["flow_cap"],
+                    pct_flow_cap=G1.edges[nleft, nodes_to_cluster[0]]["flow"] /
+                                 G1.edges[nleft, nodes_to_cluster[0]]["flow_cap"]
+                    )
+    for nright in nb_right:  # actually it will be the case that len(nb_right) == 1
+        G1.add_edge(nnew, nright,
+                    Line="-".join(np.unique([G1.edges[n1, n2]["Line"]
+                                             for n1, n2 in zip(nodes_to_cluster[:-1], nodes_to_cluster[1:])])),
+                    StationA=nnew, StationB=nright,
+                    Distance=G1.edges[nodes_to_cluster[-1], nright]["Distance"] +
+                             sum([G1.edges[n1, n2]["Distance"]
+                                  for n1, n2 in zip(nodes_to_cluster[:-1], nodes_to_cluster[1:])]) / 2,
+                    running_time_min=G1.edges[nodes_to_cluster[-1], nright]["running_time_min"] +
+                                     sum([G1.edges[n1, n2]["running_time_min"]
+                                          for n1, n2 in zip(nodes_to_cluster[:-1], nodes_to_cluster[1:])]) / 2,
+                    flow=G1.edges[nodes_to_cluster[-1], nright]["flow"],
+                    flow_cap=G1.edges[nodes_to_cluster[-1], nright]["flow_cap"],
+                    pct_flow_cap=G1.edges[nodes_to_cluster[-1], nright]["flow"] /
+                                 G1.edges[nodes_to_cluster[-1], nright]["flow_cap"]
+                    )
+    for n1, n2 in zip(nodes_to_cluster[:-1], nodes_to_cluster[1:]):
+        G1.remove_edge(n1, n2)
+    for n in nodes_to_cluster:
+        G1.remove_node(n)
     # for node in nodes_to_cluster[1:]:
     #     G1 = nx.contracted_nodes(G1, nodes_to_cluster[0], node, self_loops=False, copy=True)
     return G1
