@@ -321,60 +321,74 @@ def create_power_ukpn_graph(gisnode, circuit, trans2w, trans3w, loads, geners):
         successors = list(G.successors(n))
         G.nodes[n]["thruflow_cap"] = max(sum([G.edges[p, n]["flow_cap"] for p in predecessors]),
                                          sum([G.edges[n, s]["flow_cap"] for s in successors]))
+        
+    return G
 
-    # P.U.1.2.8 Initialise flows based on flow balance optimisation
+
+# P.U.2 Calculate baseline flows
+def flowcalc_power_ukpn_graph(G):
+
+    # Duplicate subgraphs in network (generalised)
     for subG in util.weakly_connected_component_subgraphs(G, copy=True):
         constraints = list()
+
+        # P.U.2.1 Initialise flows
         # Add link flows as variables
         for u, v in subG.edges():
             subG.edges[u, v]["flow"] = cp.Variable(nonneg=True, name="flow_{" + str(u) + "," + str(v) + "}")
         # Add node flows (in/gen/con/out) and thruflow as variables
         for n in subG.nodes():
             subG.nodes[n]["flow_out"] = 0.
-            subG.nodes[n]["flow_in"] = cp.Variable(nonneg=True, name="flow_in_{"+str(n)+"}") \
+            subG.nodes[n]["flow_in"] = cp.Variable(nonneg=True, name="flow_in_{" + str(n) + "}") \
                 if subG.nodes[n]["type"] == "GSP" else 0.
-            subG.nodes[n]["flow_gen"] = cp.Variable(nonneg=True, name="flow_gen_{"+str(n)+"}") \
+            subG.nodes[n]["flow_gen"] = cp.Variable(nonneg=True, name="flow_gen_{" + str(n) + "}") \
                 if subG.nodes[n]["type"] == "generator" else 0.
             subG.nodes[n]["flow_con"] = subG.nodes[n]["Maximum_Demand_1920_MW_winter"] \
                 if subG.nodes[n]["type"] == "load" else 0.
-        # DEBUG
+
+        # DEBUG - For troubleshooting
         if any([subG.nodes[n]["type"] == "GSP" for n in subG.nodes()]):
             print("GSP found: " + str([n for n in subG.nodes() if subG.nodes[n]["type"] == "GSP"]))
         else:
             print("No GSP found for this subgrid!")
+
+        # P.U.2.2 Add constraints
         for n in subG.nodes():
             predecessors = list(subG.predecessors(n))
             successors = list(subG.successors(n))
-            # Flow balance
+            # Node flow balance
             constraints.append(sum([subG.edges[p, n]["flow"] for p in predecessors])
                                + subG.nodes[n]["flow_in"] + subG.nodes[n]["flow_gen"]
                                ==
                                sum([subG.edges[n, s]["flow"] for s in successors])
                                + subG.nodes[n]["flow_out"] + subG.nodes[n]["flow_con"])
+        # Overall subgraph flow balance
         constraints.append(sum([subG.nodes[n]["flow_in"] + subG.nodes[n]["flow_gen"] for n in subG.nodes()])
                            ==
                            sum([subG.nodes[n]["flow_out"] + subG.nodes[n]["flow_con"] for n in subG.nodes()]))
 
-        # DEBUG - To troubelshoot unbalanced nodes
+        # DEBUG - For troubleshooting unbalanced nodes
         for constr in constraints:
             if len(constr.expr.grad) >= 1:
                 for g in constr.expr.grad:
                     if "Back Hill" in g._name:
                         print(constr)
 
+        # P.U.2.3 Solve optimisation problem to minimise line capacities exceeding
         objective = cp.Minimize(sum([subG.edges[u, v]["flow"] - subG.edges[u, v]["flow_cap"] for u, v in subG.edges()]))
         flow_balance_model = cp.Problem(objective, constraints)
         flow_balance_model.solve(solver=cp.OSQP, verbose=True, eps_abs=1.e-2, eps_rel=1.e-2)
 
-        # DEBUG
+        # DEBUG - For troubleshooting if constraints are satisfied
         if flow_balance_model.status == cp.OPTIMAL:
             for n in subG.nodes():
                 predecessors = list(subG.predecessors(n))
                 successors = list(subG.successors(n))
                 # Flow balance
                 lhs = sum([subG.edges[p, n]["flow"].value for p in predecessors]) \
-                      + (subG.nodes[n]["flow_in"].value if isinstance(subG.nodes[n]["flow_in"], cp.Variable) else subG.nodes[n][
-                    "flow_in"]) \
+                      + (subG.nodes[n]["flow_in"].value if isinstance(subG.nodes[n]["flow_in"], cp.Variable) else
+                         subG.nodes[n][
+                             "flow_in"]) \
                       + (subG.nodes[n]["flow_gen"].value if isinstance(subG.nodes[n]["flow_gen"], cp.Variable) else
                          subG.nodes[n]["flow_gen"])
                 rhs = sum([subG.edges[n, s]["flow"].value for s in successors]) \
@@ -384,27 +398,43 @@ def create_power_ukpn_graph(gisnode, circuit, trans2w, trans3w, loads, geners):
                          subG.nodes[n]["flow_con"])
                 try:
                     if abs(rhs - lhs) / max(lhs, rhs) > 0.1 and (rhs > 0.1 or lhs > 0.1):
-                        print("Unbalanced node: " + n + "(" + G.nodes[n]["type"] + ") : in=" + str(lhs) + ", out=" + str(rhs))
+                        print(
+                            "Unbalanced node: " + n + "(" + G.nodes[n]["type"] + ") : in=" + str(lhs) + ", out=" + str(
+                                rhs))
                 except RuntimeWarning as e:
                     print(n, lhs, rhs, e)
 
-            subGlhs = sum([(subG.nodes[n]["flow_in"].value if isinstance(subG.nodes[n]["flow_in"], cp.Variable) else subG.nodes[n][
-                "flow_in"])
+            subGlhs = sum([(subG.nodes[n]["flow_in"].value if isinstance(subG.nodes[n]["flow_in"], cp.Variable) else
+                            subG.nodes[n][
+                                "flow_in"])
                            + (subG.nodes[n]["flow_gen"].value if isinstance(subG.nodes[n]["flow_gen"], cp.Variable) else
                               subG.nodes[n]["flow_gen"])
                            for n in subG.nodes()])
-            subGrhs = sum([(subG.nodes[n]["flow_out"].value if isinstance(subG.nodes[n]["flow_out"], cp.Variable) else subG.nodes[n][
-                "flow_out"])
+            subGrhs = sum([(subG.nodes[n]["flow_out"].value if isinstance(subG.nodes[n]["flow_out"], cp.Variable) else
+                            subG.nodes[n][
+                                "flow_out"])
                            + (subG.nodes[n]["flow_con"].value if isinstance(subG.nodes[n]["flow_con"], cp.Variable) else
                               subG.nodes[n]["flow_con"])
                            for n in subG.nodes()])
             print("Subgrid overall: in=", subGlhs, ", out=", subGrhs)
 
-        continue
-        
+        # P.U.2.4 Assign flows back to original graph
+        for u, v in subG.edges():
+            G.edges[u, v]["flow"] = subG.edges[u, v]["flow"].value \
+                if isinstance(subG.edges[u, v]["flow"], cp.Variable) \
+                else subG.edges[u, v]["flow"] if isinstance(subG.edges[u, v]["flow"], (float, int)) else 0.
+            G.edges[u, v]["pct_flow_cap"] = G.edges[u, v]["flow"] / G.edges[u, v]["flow_cap"]
+        for n in subG.nodes():
+            predecessors = list(G.predecessors(n))
+            successors = list(G.successors(n))
+            G.nodes[n]["thruflow"] = max(sum([G.edges[p, n]["flow"] for p in predecessors]),
+                                         sum([G.edges[n, s]["flow"] for s in successors]))
+            G.nodes[n]["pct_thruflow_cap"] = G.nodes[n]["thruflow"] / G.nodes[n]["thruflow_cap"]
+
     return G
 
 
+# P.U.5 Flow check
 def flow_check(G):
     for u, v in G.edges():
         if (G.edges[u, v]["flow"] > G.edges[u, v]["flow_cap"]) \
@@ -429,7 +459,17 @@ if __name__ == "__main__":
         except FileNotFoundError as e:
             print(e)
 
-    # P.U.2 Export graph nodelist
+    # P.U.2 Calculate baseline flows
+    try:
+        G_flow = pickle.load(open(r'data/power_ukpn/out/power_ukpn_G_flow.pkl', "rb"))
+    except IOError:
+        G_flow = flowcalc_power_ukpn_graph(G)
+        try:
+            pickle.dump(G_flow, open(r'data/power_ukpn/out/power_ukpn_G_flow.pkl', 'wb+'))
+        except FileNotFoundError as e:
+            print(e)
+
+    # P.U.3 Export graph nodelist
     try:
         combined_nodelist = pd.DataFrame([i[1] for i in G.nodes(data=True)],
                                          index=[i[0] for i in G.nodes(data=True)])
@@ -438,17 +478,17 @@ if __name__ == "__main__":
     except Exception as e:
         print(e)
 
-    # P.U.3 Export adjacency matrix
+    # P.U.4 Export adjacency matrix
     try:
         combined_adjmat = nx.adjacency_matrix(G, nodelist=None, weight="weight")  # gives scipy sparse matrix
         sparse.save_npz(r'data/power_ukpn/out/power_ukpn_adjmat.npz', combined_adjmat)
     except Exception as e:
         print(e)
 
-    # P.U.4 Flow check
+    # P.U.5 Flow check
     flow_check(G)
 
-    # P.U.5 Add colours and export map plot
+    # P.U.6 Add colours and export map plot
     node_colors = [POWER_COLORS.get(G.nodes[node]["type"], "#000000") for node in G.nodes()]
     edge_colors = [POWER_COLORS.get("cable", "#000000") for u, v in G.edges()]  # FYI assumes underground cable
 
