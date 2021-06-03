@@ -137,6 +137,7 @@ def weakly_connected_component_subgraphs(G, copy=True):
 
 def linear_cluster(G, nodes_to_cluster):
     # Nomenclature: (rest of network-x)-a-b-c-(y-rest of network)
+
     G1 = G.copy()  # deepcopy
     nnew = "-".join([str(n) for n in nodes_to_cluster])
 
@@ -151,19 +152,23 @@ def linear_cluster(G, nodes_to_cluster):
                 line="-".join(np.unique([G1.nodes[n]["line"] for n in nodes_to_cluster])),
                 NLC="-".join([str(G1.nodes[n]["NLC"]) for n in nodes_to_cluster]),
                 railway="station",
-                flow_in=sum([G1.nodes[n]["flow_in"] for n in nodes_to_cluster]),
-                flow_out=sum([G1.nodes[n]["flow_out"] for n in nodes_to_cluster]),
+                flow_in=round(sum([G1.nodes[n]["flow_in"] for n in nodes_to_cluster])),
+                flow_out=round(sum([G1.nodes[n]["flow_out"] for n in nodes_to_cluster])),
                 thruflow=G1.edges[nb_left[-1], nodes_to_cluster[0]]["flow"] +
                          G1.edges[nodes_to_cluster[-1], nb_right[0]]["flow"],
-                thruflow_cap=G1.edges[nb_left[-1], nodes_to_cluster[0]]["flow_cap"] +
-                             G1.edges[nodes_to_cluster[-1], nb_right[0]]["flow_cap"],
+                thruflow_cap=round((sum([G1.nodes[n]["flow_in"] for n in nodes_to_cluster]) +
+                             sum([G1.nodes[n]["flow_out"] for n in nodes_to_cluster]) +
+                             G1.edges[nb_left[-1], nodes_to_cluster[0]]["flow_cap"] +
+                             G1.edges[nodes_to_cluster[0], nb_left[-1]]["flow_cap"] +
+                             G1.edges[nodes_to_cluster[-1], nb_right[0]]["flow_cap"] +
+                             G1.edges[nb_right[0], nodes_to_cluster[-1]]["flow_cap"]) / 2),
                 pct_thruflow_cap=(G1.edges[nb_left[-1], nodes_to_cluster[0]]["flow"] +
                                   G1.edges[nodes_to_cluster[-1], nb_right[0]]["flow"]) /
                                  (G1.edges[nb_left[-1], nodes_to_cluster[0]]["flow_cap"] +
                                   G1.edges[nodes_to_cluster[-1], nb_right[0]]["flow_cap"])
                 )
 
-    for nleft in nb_left:  # actually it will be the case that len(nb_left) == 1
+    for nleft in nb_left:  # actually it will always be the case that len(nb_left) == 1
         G1.add_edge(nleft, nnew,
                     Line="-".join(np.unique([G1.edges[n1, n2]["Line"]
                                              for n1, n2 in zip(nodes_to_cluster[:-1], nodes_to_cluster[1:])])),
@@ -175,11 +180,28 @@ def linear_cluster(G, nodes_to_cluster):
                                      sum([G1.edges[n1, n2]["running_time_min"]
                                           for n1, n2 in zip(nodes_to_cluster[:-1], nodes_to_cluster[1:])]) / 2,
                     flow=G1.edges[nleft, nodes_to_cluster[0]]["flow"],
+                    flow_capscal=G1.edges[nleft, nodes_to_cluster[0]]["flow_capscal"],
                     flow_cap=G1.edges[nleft, nodes_to_cluster[0]]["flow_cap"],
                     pct_flow_cap=G1.edges[nleft, nodes_to_cluster[0]]["flow"] /
                                  G1.edges[nleft, nodes_to_cluster[0]]["flow_cap"]
                     )
-    for nright in nb_right:  # actually it will be the case that len(nb_right) == 1
+        G1.add_edge(nnew, nleft,
+                    Line="-".join(np.unique([G1.edges[n1, n2]["Line"]
+                                             for n1, n2 in zip(nodes_to_cluster[:-1], nodes_to_cluster[1:])])),
+                    StationA=G1.nodes[nnew]["nodeLabel"], StationB=G1.nodes[nleft]["nodeLabel"],
+                    Distance=G1.edges[nodes_to_cluster[0], nleft]["Distance"] +
+                             sum([G1.edges[n1, n2]["Distance"]
+                                  for n1, n2 in zip(nodes_to_cluster[:-1], nodes_to_cluster[1:])]) / 2,
+                    running_time_min=G1.edges[nodes_to_cluster[0], nleft]["running_time_min"] +
+                                     sum([G1.edges[n1, n2]["running_time_min"]
+                                          for n1, n2 in zip(nodes_to_cluster[:-1], nodes_to_cluster[1:])]) / 2,
+                    flow=G1.edges[nodes_to_cluster[0], nleft]["flow"],
+                    flow_capscal=G1.edges[nodes_to_cluster[0], nleft]["flow_capscal"],
+                    flow_cap=G1.edges[nodes_to_cluster[0], nleft]["flow_cap"],
+                    pct_flow_cap=G1.edges[nodes_to_cluster[0], nleft]["flow"] /
+                                 G1.edges[nodes_to_cluster[0], nleft]["flow_cap"]
+                    )
+    for nright in nb_right:  # actually it will always be the case that len(nb_right) == 1
         G1.add_edge(nnew, nright,
                     Line="-".join(np.unique([G1.edges[n1, n2]["Line"]
                                              for n1, n2 in zip(nodes_to_cluster[:-1], nodes_to_cluster[1:])])),
@@ -191,15 +213,31 @@ def linear_cluster(G, nodes_to_cluster):
                                      sum([G1.edges[n1, n2]["running_time_min"]
                                           for n1, n2 in zip(nodes_to_cluster[:-1], nodes_to_cluster[1:])]) / 2,
                     flow=G1.edges[nodes_to_cluster[-1], nright]["flow"],
+                    flow_capscal=G1.edges[nodes_to_cluster[-1], nright]["flow_capscal"],
                     flow_cap=G1.edges[nodes_to_cluster[-1], nright]["flow_cap"],
                     pct_flow_cap=G1.edges[nodes_to_cluster[-1], nright]["flow"] /
                                  G1.edges[nodes_to_cluster[-1], nright]["flow_cap"]
                     )
+        G1.add_edge(nright, nnew,
+                    Line="-".join(np.unique([G1.edges[n1, n2]["Line"]
+                                             for n1, n2 in zip(nodes_to_cluster[:-1], nodes_to_cluster[1:])])),
+                    StationA=G1.nodes[nright]["nodeLabel"], StationB=G1.nodes[nnew]["nodeLabel"],
+                    Distance=G1.edges[nright, nodes_to_cluster[-1]]["Distance"] +
+                             sum([G1.edges[n1, n2]["Distance"]
+                                  for n1, n2 in zip(nodes_to_cluster[:-1], nodes_to_cluster[1:])]) / 2,
+                    running_time_min=G1.edges[nright, nodes_to_cluster[-1]]["running_time_min"] +
+                                     sum([G1.edges[n1, n2]["running_time_min"]
+                                          for n1, n2 in zip(nodes_to_cluster[:-1], nodes_to_cluster[1:])]) / 2,
+                    flow=G1.edges[nright, nodes_to_cluster[-1]]["flow"],
+                    flow_capscal=G1.edges[nright, nodes_to_cluster[-1]]["flow_capscal"],
+                    flow_cap=G1.edges[nright, nodes_to_cluster[-1]]["flow_cap"],
+                    pct_flow_cap=G1.edges[nright, nodes_to_cluster[-1]]["flow"] /
+                                 G1.edges[nright, nodes_to_cluster[-1]]["flow_cap"]
+                    )
     for n1, n2 in zip(nodes_to_cluster[:-1], nodes_to_cluster[1:]):
         G1.remove_edge(n1, n2)
+        G1.remove_edge(n2, n1)
     for n in nodes_to_cluster:
         G1.remove_node(n)
-    # for node in nodes_to_cluster[1:]:
-    #     G1 = nx.contracted_nodes(G1, nodes_to_cluster[0], node, self_loops=False, copy=True)
-    return G1
 
+    return G1
