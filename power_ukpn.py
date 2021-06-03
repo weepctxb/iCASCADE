@@ -322,17 +322,6 @@ def create_power_ukpn_graph(gisnode, circuit, trans2w, trans3w, loads, geners):
         G.nodes[n]["thruflow_cap"] = max(sum([G.edges[p, n]["flow_cap"] for p in predecessors]),
                                          sum([G.edges[n, s]["flow_cap"] for s in successors]))
 
-    # P.U.1.2.8 Calculate and assign centralities
-    bb = dict()
-    cc = dict()
-
-    for subG in util.weakly_connected_component_subgraphs(G, copy=True):
-        bb.update(nx.current_flow_betweenness_centrality(subG.to_undirected(), normalized=True, weight="flow_cap"))
-        cc.update(nx.current_flow_closeness_centrality(subG.to_undirected(), weight="flow_cap"))
-
-    nx.set_node_attributes(G, bb, 'betweenness')
-    nx.set_node_attributes(G, cc, 'closeness')
-
     return G
 
 
@@ -388,7 +377,7 @@ def flowcalc_power_ukpn_graph(G):
         # P.U.2.3 Solve optimisation problem to minimise line capacities exceeding
         objective = cp.Minimize(sum([subG.edges[u, v]["flow"] - subG.edges[u, v]["flow_cap"] for u, v in subG.edges()]))
         flow_balance_model = cp.Problem(objective, constraints)
-        flow_balance_model.solve(solver=cp.OSQP, verbose=True, eps_abs=1.e-3, eps_rel=1.e-3)
+        flow_balance_model.solve(solver=cp.OSQP, verbose=True, eps_abs=1.e-4, eps_rel=1.e-4)
 
         # DEBUG - For troubleshooting if constraints are satisfied
         if flow_balance_model.status == cp.OPTIMAL:
@@ -445,7 +434,7 @@ def flowcalc_power_ukpn_graph(G):
     return G
 
 
-# P.U.5 Flow check
+# P.U.3.1 Flow check
 def flow_check(G):
     for u, v in G.edges():
         if (G.edges[u, v]["flow"] > G.edges[u, v]["flow_cap"]) \
@@ -455,6 +444,31 @@ def flow_check(G):
         if (G.nodes[n]["thruflow"] > G.nodes[n]["thruflow_cap"]) \
                 or (G.nodes[n]["thruflow"] == 0) or (G.nodes[n]["thruflow_cap"] == 0):
             print("Node Warning: ", n, G.nodes[n]["thruflow"], G.nodes[n]["thruflow_cap"])
+
+
+# P.U.3.2 Calculate centralities
+def calc_centrality(G):
+    cfb = dict()
+    eb = dict()
+    ecfb = dict()
+
+    for subG in util.weakly_connected_component_subgraphs(G, copy=True):
+        cfb.update(nx.current_flow_betweenness_centrality(subG.to_undirected(), normalized=False, weight="flow_cap"))
+
+        eb.update(nx.edge_betweenness_centrality(G, normalized=True, weight="running_time_min"))
+        ecfb.update(nx.edge_current_flow_betweenness_centrality(subG.to_undirected(), normalized=False,
+                                                                weight="flow_cap"))
+
+    nx.set_node_attributes(G, cfb, 'current_flow_betweenness')
+
+    nx.set_edge_attributes(G, eb, 'edge_betweenness')
+    for u, v in G.edges():
+        try:
+            G.edges[u, v]["edge_current_flow_betweenness"] = ecfb[(u, v)]
+        except Exception as e:
+            G.edges[u, v]["edge_current_flow_betweenness"] = ecfb[(v, u)]  # PATCH
+
+    return G
 
 
 if __name__ == "__main__":
@@ -480,7 +494,11 @@ if __name__ == "__main__":
         except FileNotFoundError as e:
             print(e)
 
-    # P.U.3 Export graph nodelist
+    # P.U.3 Check flows
+    flow_check(G_flow)
+    G_flow = calc_centrality(G_flow)
+
+    # P.U.4 Export graph nodelist
     try:
         combined_nodelist = pd.DataFrame([i[1] for i in G_flow.nodes(data=True)],
                                          index=[i[0] for i in G_flow.nodes(data=True)])
@@ -489,30 +507,31 @@ if __name__ == "__main__":
     except Exception as e:
         print(e)
 
-    # P.U.4 Export adjacency matrix
+    # P.U.5 Export adjacency matrix
     try:
         combined_adjmat = nx.adjacency_matrix(G_flow, nodelist=None, weight="weight")  # gives scipy sparse matrix
         sparse.save_npz(r'data/power_ukpn/out/power_ukpn_adjmat.npz', combined_adjmat)
     except Exception as e:
         print(e)
 
-    # P.U.5 Export graph edgelist
+    # P.U.6 Export graph edgelist
     try:
-        edgelist = pd.DataFrame(columns=["From", "To", "flow", "flow_cap", "pct_flow_cap"])
+        edgelist = pd.DataFrame(columns=["From", "To",
+                                         "flow", "flow_cap", "pct_flow_cap",
+                                         "edge_betweenness", "edge_current_flow_betweenness"])
         for u, v in G_flow.edges():
             series_obj = pd.Series([u, v,
                                     G_flow.edges[u, v]["flow"], G_flow.edges[u, v]["flow_cap"],
-                                    G_flow.edges[u, v]["pct_flow_cap"]],
+                                    G_flow.edges[u, v]["pct_flow_cap"],
+                                    G_flow.edges[u, v]["edge_betweenness"],
+                                    G_flow.edges[u, v]["edge_current_flow_betweenness"]],
                                    index=edgelist.columns)
             edgelist = edgelist.append(series_obj, ignore_index=True)
         edgelist.to_excel(r'data/power_ukpn/out/power_ukpn_edgelist.xlsx', index=True)
     except Exception as e:
         print(e)
 
-    # P.U.5 Flow check
-    flow_check(G_flow)
-
-    # P.U.6 Add colours and export map plot
+    # P.U.7 Add colours and export map plot
     node_colors = [POWER_COLORS.get(G_flow.nodes[node]["type"], "#000000") for node in G_flow.nodes()]
     edge_colors = [POWER_COLORS.get("cable", "#000000") for u, v in G_flow.edges()]  # FYI assumes underground cable
 
