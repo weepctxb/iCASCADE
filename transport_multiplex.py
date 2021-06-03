@@ -30,6 +30,8 @@ def load_transport_multiplex_data():
         edges = pd.read_excel("data/transport_multiplex/raw/transport_multiplex.xlsx",
                               sheet_name="london_transport_raw", header=0)
         edges.to_pickle("data/transport_multiplex/in/transport_multiplex_edges.pkl")
+    # PATCH Ignore interchanges with walk links first
+    edges = edges.loc[edges["Line"] != "walk-link"]
 
     # T.M.1.1.3 Load O-D matrix
     try:
@@ -209,12 +211,34 @@ def flowcalc_transport_multiplex_graph(G, odmat, capac):
     return G
 
 
+def flowcalc_transport_multiplex_graph_capscal(G):
+    G1 = G.to_directed()
+    for n in G1.nodes():
+        G1.nodes[n]["flow_in"] = round(G1.nodes[n]["flow_in"])
+        G1.nodes[n]["flow_out"] = round(G1.nodes[n]["flow_out"])
+    total_supply = sum([G1.nodes[n]["flow_in"] for n in G1.nodes()])
+    total_demand = sum([G1.nodes[n]["flow_out"] for n in G1.nodes()])
+    for n in G1.nodes():
+        G1.nodes[n]["demand"] = round(G1.nodes[n]["flow_out"] - G1.nodes[n]["flow_in"] * total_demand / total_supply)
+    G1.nodes[n]["demand"] -= sum(G1.nodes[u].get("demand", 0) for u in G1)  # PATCH FIXME
+    for u, v in G1.edges():
+        G1.edges[u, v]["capacity"] = round(G1.edges[u, v]["flow_cap"])
+        G1.edges[u, v]["weight"] = round(G1.edges[u, v]["Distance"] * 1000)
+    flowCost, flowDict = nx.capacity_scaling(G1, demand='demand', capacity='capacity', weight='weight')
+    for u, v in G1.edges():
+        G.edges[u, v]["flow_capscal"] = flowDict[u][v] + flowDict[v][u]
+    return G
+
+
 # T.M.x Simplify network
 def simplify_transport_multiplex_graph(G):
+    # Current rule: Cluster 3 of:
+    # - adjacent & consecutive stations with degree 2; and excluding
+    # - line terminals
+    # into a single hypernode
     adj_nonitc_path_list = list()
     for u, v in G.edges():
-        if (G.nodes[u]["interchange"] == False) and (G.nodes[v]["interchange"] == False) \
-                and (G.degree[u] == 2) and (G.degree[v] == 2):
+        if (G.degree[u] == 2) and (G.degree[v] == 2):
             u_nb = [n for n in G.neighbors(u) if n != v and G.degree[n] == 2]
             v_nb = [n for n in G.neighbors(v) if n != u and G.degree[n] == 2]
             if len([u, v] + v_nb) == 3:
@@ -239,6 +263,13 @@ def flow_check(G):
         if (G.nodes[n]["thruflow"] > G.nodes[n]["thruflow_cap"]) \
                 or (G.nodes[n]["thruflow"] == 0) or (G.nodes[n]["thruflow_cap"] == 0):
             print("Node Warning: ", n, G.nodes[n]["thruflow"], G.nodes[n]["thruflow_cap"])
+
+
+# T.M.x Graph stats summary
+def stats_summary(G):
+    print("Stats summary:")
+    print("sigma:", nx.sigma(G, niter=1, nrand=5), "(small world if >1)")
+    print("omega:", nx.omega(G, niter=1, nrand=5), "(lattice if ~-1, small world if ~0, random if ~1)")
 
 # def plot_degree_histogram(G):
 #
@@ -279,6 +310,7 @@ if __name__ == "__main__":
     except IOError:
         _, _, odmat, capac = load_transport_multiplex_data()
         G_flow = flowcalc_transport_multiplex_graph(G, odmat, capac)
+        G_flow = flowcalc_transport_multiplex_graph_capscal(G_flow)  # DEBUG alternative flow calc
         try:
             pickle.dump(G_flow, open(r'data/transport_multiplex/out/transport_multiplex_G_flow.pkl', 'wb+'))
         except FileNotFoundError as e:
@@ -289,6 +321,8 @@ if __name__ == "__main__":
         G_skele = pickle.load(open(r'data/transport_multiplex/out/transport_multiplex_G_flow_skele.pkl', "rb"))
     except IOError:
         G_skele = simplify_transport_multiplex_graph(G_flow)
+        G_skele = simplify_transport_multiplex_graph(G_skele)  # Run it again!
+        # Beyond this the graph can no longer be further simplified using the current rules
         try:
             pickle.dump(G_skele, open(r'data/transport_multiplex/out/transport_multiplex_G_flow_skele.pkl', 'wb+'))
         except FileNotFoundError as e:
@@ -296,6 +330,10 @@ if __name__ == "__main__":
 
     # T.M.x Check flows
     flow_check(G_skele)
+
+    # T.M.x Graph stats summary
+    # stats_summary(G)
+    # stats_summary(G_skele)
 
     # T.M.3 Export graph nodelist
     try:
@@ -314,12 +352,14 @@ if __name__ == "__main__":
 
     # T.M.5 Export graph edgelist
     try:
-        edgelist = pd.DataFrame(columns=["StationA_ID", "StationA", "StationB_ID", "StationB", "flow", "flow_cap",
-                                         "pct_flow_cap"])
+        edgelist = pd.DataFrame(columns=["StationA_ID", "StationA", "StationA_NLC",
+                                         "StationB_ID", "StationB", "StationB_NLC",
+                                         "flow", "flow_capscal", "flow_cap", "pct_flow_cap"])
         for u, v in G_skele.edges():
-            series_obj = pd.Series([u, G_skele.edges[u, v]["StationA"], v, G_skele.edges[u, v]["StationB"],
-                                    G_skele.edges[u, v]["flow"], G_skele.edges[u, v]["flow_cap"],
-                                    G_skele.edges[u, v]["pct_flow_cap"]],
+            series_obj = pd.Series([u, G_skele.nodes[u]["nodeLabel"], G_skele.nodes[u]["NLC"],
+                                    v, G_skele.nodes[v]["nodeLabel"], G_skele.nodes[v]["NLC"],
+                                    G_skele.edges[u, v]["flow"], G_skele.edges[u, v]["flow_capscal"],
+                                    G_skele.edges[u, v]["flow_cap"], G_skele.edges[u, v]["pct_flow_cap"]],
                                    index=edgelist.columns)
             edgelist = edgelist.append(series_obj, ignore_index=True)
         edgelist.to_excel(r'data/transport_multiplex/out/transport_multiplex_edgelist.xlsx', index=True)

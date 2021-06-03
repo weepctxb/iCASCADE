@@ -379,16 +379,16 @@ def flowcalc_power_ukpn_graph(G):
                            sum([subG.nodes[n]["flow_out"] + subG.nodes[n]["flow_con"] for n in subG.nodes()]))
 
         # DEBUG - For troubleshooting unbalanced nodes
-        for constr in constraints:
-            if len(constr.expr.grad) >= 1:
-                for g in constr.expr.grad:
-                    if "Back Hill" in g._name:
-                        print(constr)
+        # for constr in constraints:
+        #     if len(constr.expr.grad) >= 1:
+        #         for g in constr.expr.grad:
+        #             if "Back Hill" in g._name:
+        #                 print(constr)
 
         # P.U.2.3 Solve optimisation problem to minimise line capacities exceeding
         objective = cp.Minimize(sum([subG.edges[u, v]["flow"] - subG.edges[u, v]["flow_cap"] for u, v in subG.edges()]))
         flow_balance_model = cp.Problem(objective, constraints)
-        flow_balance_model.solve(solver=cp.OSQP, verbose=True, eps_abs=1.e-2, eps_rel=1.e-2)
+        flow_balance_model.solve(solver=cp.OSQP, verbose=True, eps_abs=1.e-3, eps_rel=1.e-3)
 
         # DEBUG - For troubleshooting if constraints are satisfied
         if flow_balance_model.status == cp.OPTIMAL:

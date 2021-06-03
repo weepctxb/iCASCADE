@@ -143,7 +143,7 @@ def linear_cluster(G, nodes_to_cluster):
     nb_left = [n for n in G1.neighbors(nodes_to_cluster[0]) if n != nodes_to_cluster[1]]
     nb_right = [n for n in G1.neighbors(nodes_to_cluster[-1]) if n != nodes_to_cluster[-2]]
 
-    G1.add_node("-".join([str(n) for n in nodes_to_cluster]),
+    G1.add_node(nnew,
                 pos=(np.average([G1.nodes[n]["pos"][0] for n in nodes_to_cluster]),
                      np.average([G1.nodes[n]["pos"][1] for n in nodes_to_cluster])),
                 nodeLabel="-".join([G1.nodes[n]["nodeLabel"] for n in nodes_to_cluster]),
@@ -167,7 +167,7 @@ def linear_cluster(G, nodes_to_cluster):
         G1.add_edge(nleft, nnew,
                     Line="-".join(np.unique([G1.edges[n1, n2]["Line"]
                                              for n1, n2 in zip(nodes_to_cluster[:-1], nodes_to_cluster[1:])])),
-                    StationA=nleft, StationB=nnew,
+                    StationA=G1.nodes[nleft]["nodeLabel"], StationB=G1.nodes[nnew]["nodeLabel"],
                     Distance=G1.edges[nleft, nodes_to_cluster[0]]["Distance"] +
                              sum([G1.edges[n1, n2]["Distance"]
                                   for n1, n2 in zip(nodes_to_cluster[:-1], nodes_to_cluster[1:])]) / 2,
@@ -183,7 +183,7 @@ def linear_cluster(G, nodes_to_cluster):
         G1.add_edge(nnew, nright,
                     Line="-".join(np.unique([G1.edges[n1, n2]["Line"]
                                              for n1, n2 in zip(nodes_to_cluster[:-1], nodes_to_cluster[1:])])),
-                    StationA=nnew, StationB=nright,
+                    StationA=G1.nodes[nnew]["nodeLabel"], StationB=G1.nodes[nright]["nodeLabel"],
                     Distance=G1.edges[nodes_to_cluster[-1], nright]["Distance"] +
                              sum([G1.edges[n1, n2]["Distance"]
                                   for n1, n2 in zip(nodes_to_cluster[:-1], nodes_to_cluster[1:])]) / 2,
