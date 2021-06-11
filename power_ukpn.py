@@ -62,11 +62,27 @@ def load_power_ukpn_data():
                               sheet_name="Table 5 - Generation", header=0)
         geners.to_pickle("data/power_ukpn/in/power_ukpn_gen.pkl")
 
-    return gisnode, circuit, trans2w, trans3w, loads, geners
+    # P.U.1.1.7 Load transmission circuit data
+    try:
+        txcirc = pd.read_pickle("data/power_ukpn/in/power_ukpn_txcirc.pkl")
+    except IOError:
+        txcirc = pd.read_excel("data/power_ukpn/raw/power_ukpn.xlsx",
+                              sheet_name="Transmission Circuit", header=0)
+        txcirc.to_pickle("data/power_ukpn/in/power_ukpn_txcirc.pkl")
+
+    # P.U.1.1.7 Load transmission transformer data
+    try:
+        txtran = pd.read_pickle("data/power_ukpn/in/power_ukpn_txtran.pkl")
+    except IOError:
+        txtran = pd.read_excel("data/power_ukpn/raw/power_ukpn.xlsx",
+                              sheet_name="Transmission Transformer", header=0)
+        txtran.to_pickle("data/power_ukpn/in/power_ukpn_txtran.pkl")
+
+    return gisnode, circuit, trans2w, trans3w, loads, geners, txcirc, txtran
 
 
 # P.U.1.2 Create networkx graph
-def create_power_ukpn_graph(gisnode, circuit, trans2w, trans3w, loads, geners):
+def create_power_ukpn_graph(gisnode, circuit, trans2w, trans3w, loads, geners, txcirc, txtran):
 
     # P.U.1.2.1 Create graph from edges dataframe - circuits
 
@@ -86,7 +102,8 @@ def create_power_ukpn_graph(gisnode, circuit, trans2w, trans3w, loads, geners):
         "Susceptance [B] % on 100MVA base": lambda x: np.nanmean(x),
         "Rating Amps Summer": lambda x: np.nansum([0. if isinstance(_, str) else _ for _ in x]),
         "Rating Amps Winter": lambda x: np.nansum(x),
-        "Circuit Length km": lambda x: np.nanmean([0. if isinstance(_, str) else _ for _ in x])
+        "Circuit Length km": lambda x: np.nanmean([0. if isinstance(_, str) else _ for _ in x]),
+        "G_base": lambda x: np.nansum(x)
     }).reset_index()
 
     # Get list of GSPs
@@ -98,7 +115,9 @@ def create_power_ukpn_graph(gisnode, circuit, trans2w, trans3w, loads, geners):
                                              "From x", "From y",
                                              "To x", "To y",
                                              "Circuit Length km", "Operating Voltage kV",
-                                             "Rating Amps Summer", "Rating Amps Winter"],
+                                             "Positive Sequence Impedance [R] % on 100MVA base",
+                                             "Rating Amps Summer", "Rating Amps Winter",
+                                             "G_base"],
                                   create_using=nx.DiGraph)
 
     for u, v in G_c.edges():
@@ -110,6 +129,9 @@ def create_power_ukpn_graph(gisnode, circuit, trans2w, trans3w, loads, geners):
         # Link flow capacity
         G_c.edges[u, v]["flow_cap"] = G_c.edges[u, v]["Operating Voltage kV"] / 1000 \
                                       * G_c.edges[u, v]["Rating Amps Winter"]
+        # Calculate resistance
+        G_c.edges[u, v]["resistance"] = G_c.edges[u, v]["Positive Sequence Impedance [R] % on 100MVA base"] * G_c.edges[u, v]["flow_cap"]
+        G_c.edges[u, v]["conductance"] = G_c.edges[u, v]["G_base"] * G_c.edges[u, v]["flow_cap"]
 
     G_c.remove_edges_from(nx.selfloop_edges(G_c))  # Remove self-loops
 
@@ -132,7 +154,8 @@ def create_power_ukpn_graph(gisnode, circuit, trans2w, trans3w, loads, geners):
         "Tap Range Minimum %": lambda x: np.nanmean(x),
         "Tap Range Maximum %": lambda x: np.nanmean(x),
         "Transformer Rating Summer MVA": lambda x: np.nansum(x),
-        "Transformer Rating Winter MVA": lambda x: np.nansum(x)
+        "Transformer Rating Winter MVA": lambda x: np.nansum(x),
+        "G_base": lambda x: np.nansum(x)
     }).reset_index()
 
     # Build graph
@@ -141,7 +164,9 @@ def create_power_ukpn_graph(gisnode, circuit, trans2w, trans3w, loads, geners):
                                               "HV x", "HV y",
                                               "LV x", "LV y",
                                               "Voltage HV kV", "Voltage LV kV",
-                                              "Transformer Rating Summer MVA", "Transformer Rating Winter MVA"],
+                                              "Positive Sequence Impedance [R] % on 100MVA base",
+                                              "Transformer Rating Summer MVA", "Transformer Rating Winter MVA",
+                                              "G_base"],
                                    create_using=nx.DiGraph)
 
     for u, v in G_t2.edges():
@@ -152,6 +177,9 @@ def create_power_ukpn_graph(gisnode, circuit, trans2w, trans3w, loads, geners):
         G_t2.nodes[v]["type"] = "GSP" if v in GSPs else "substation"
         # Link flow capacity
         G_t2.edges[u, v]["flow_cap"] = G_t2.edges[u, v]["Transformer Rating Winter MVA"]  # or ["Transformer Rating Summer MVA"]
+        # Calculate resistance
+        G_t2.edges[u, v]["resistance"] = G_t2.edges[u, v]["Positive Sequence Impedance [R] % on 100MVA base"] * G_t2.edges[u, v]["flow_cap"]
+        G_t2.edges[u, v]["conductance"] = G_t2.edges[u, v]["G_base"] * G_t2.edges[u, v]["flow_cap"]
 
     G_t2.remove_edges_from(nx.selfloop_edges(G_t2))  # Remove self-loops
 
@@ -174,6 +202,7 @@ def create_power_ukpn_graph(gisnode, circuit, trans2w, trans3w, loads, geners):
         "Voltage LV2 kV": lambda x: np.nanmean(x),
         "Positive Sequence Impedance R % on 100MVA base (HV-LV1)": lambda x: np.nanmean(x),
         "Positive Sequence Impedance R % on 100MVA base (HV-LV2)": lambda x: np.nanmean(x),
+        "Positive Sequence Impedance R % on 100MVA base (LV1-LV2)": lambda x: np.nanmean(x),
         "Positive Sequence Impedance X % on 100MVA base (HV-LV1)": lambda x: np.nanmean(x),
         "Positive Sequence Impedance X % on 100MVA base (HV-LV2)": lambda x: np.nanmean(x),
         "Positive Sequence Impedance X % on 100MVA base (LV1-LV2)": lambda x: np.nanmean(x),
@@ -191,20 +220,24 @@ def create_power_ukpn_graph(gisnode, circuit, trans2w, trans3w, loads, geners):
         "Transformer Rating MVA Summer LV1": lambda x: np.nansum(x),
         "Transformer Rating MVA Winter LV1": lambda x: np.nansum(x),
         "Transformer Rating MVA Summer LV2": lambda x: np.nansum(x),
-        "Transformer Rating MVA Winter LV2": lambda x: np.nansum(x)
+        "Transformer Rating MVA Winter LV2": lambda x: np.nansum(x),
+        "G_base_HV_LV1": lambda x: np.nansum(x),
+        "G_base_HV_LV2": lambda x: np.nansum(x)
     }).reset_index()
 
     # Build graph
     G_t3 = nx.from_pandas_edgelist(trans3w, source="HV Substation", target="LV1 Substation",
-                                     edge_attr=["GSP",
-                                                "HV x", "HV y",
-                                                "LV1 x", "LV1 y",
-                                                "Voltage HV kV", "Voltage LV1 kV",
-                                                "Transformer Rating MVA Summer HV",
-                                                "Transformer Rating MVA Winter HV",
-                                                "Transformer Rating MVA Summer LV1",
-                                                "Transformer Rating MVA Winter LV1"],
-                                     create_using=nx.DiGraph)
+                                   edge_attr=["GSP",
+                                              "HV x", "HV y",
+                                              "LV1 x", "LV1 y",
+                                              "Voltage HV kV", "Voltage LV1 kV",
+                                              "Positive Sequence Impedance R % on 100MVA base (HV-LV1)",
+                                              "Transformer Rating MVA Summer HV",
+                                              "Transformer Rating MVA Winter HV",
+                                              "Transformer Rating MVA Summer LV1",
+                                              "Transformer Rating MVA Winter LV1",
+                                              "G_base_HV_LV1"],
+                                   create_using=nx.DiGraph)
 
     for u, v in G_t3.edges():
         # Node attributes
@@ -214,22 +247,33 @@ def create_power_ukpn_graph(gisnode, circuit, trans2w, trans3w, loads, geners):
         G_t3.nodes[v]["type"] = "GSP" if v in GSPs else "substation"
         # Link flow capacity
         G_t3.edges[u, v]["flow_cap"] = G_t3.edges[u, v]["Transformer Rating MVA Winter LV1"]  # or ["Transformer Rating MVA Summer LV1"]
+        # Calculate resistance
+        G_t3.edges[u, v]["resistance"] = G_t3.edges[u, v]["Positive Sequence Impedance R % on 100MVA base (HV-LV1)"] * G_t3.edges[u, v]["flow_cap"]
+        G_t3.edges[u, v]["conductance"] = G_t3.edges[u, v]["G_base_HV_LV1"] * G_t3.edges[u, v]["flow_cap"]
 
     G_t3_2 = nx.from_pandas_edgelist(trans3w, source="HV Substation", target="LV2 Substation",
                                      edge_attr=["GSP",
                                                 "HV x", "HV y",
                                                 "LV2 x", "LV2 y",
                                                 "Voltage HV kV", "Voltage LV2 kV",
+                                                "Positive Sequence Impedance R % on 100MVA base (HV-LV2)",
                                                 "Transformer Rating MVA Summer HV",
                                                 "Transformer Rating MVA Winter HV",
                                                 "Transformer Rating MVA Summer LV2",
-                                                "Transformer Rating MVA Winter LV2"],
+                                                "Transformer Rating MVA Winter LV2",
+                                                "G_base_HV_LV2"],
                                      create_using=nx.DiGraph)
-    
+
     for u, v in G_t3_2.edges():
         if (u, v) in G_t3.edges():  # If both LV sides of 3W transformer lead to same substation
             # Add flow capacity
             G_t3.edges[u, v]["flow_cap"] += G_t3_2.edges[u, v]["Transformer Rating MVA Winter LV2"]
+            # Add conductance & resistance
+            G_t3.edges[u, v]["resistance"] = 1. / (1. / G_t3.edges[u, v]["resistance"]) \
+                                             + (1. / G_t3_2.edges[u, v][
+                "Positive Sequence Impedance R % on 100MVA base (HV-LV2)"] * \
+                                                G_t3_2.edges[u, v]["Transformer Rating MVA Winter LV2"])
+            G_t3.edges[u, v]["conductance"] += G_t3_2.edges[u, v]["G_base_HV_LV2"] * G_t3_2.edges[u, v]["Transformer Rating MVA Winter LV2"]
         else:  # If LV sides of 3W transformer lead to different substations
             # Add new edge manually
             G_t3.add_edge(u, v)
@@ -240,6 +284,7 @@ def create_power_ukpn_graph(gisnode, circuit, trans2w, trans3w, loads, geners):
             G_t3.edges[u, v]["LV2 y"] = G_t3_2.edges[u, v]["LV2 y"]
             G_t3.edges[u, v]["Voltage HV kV"] = G_t3_2.edges[u, v]["Voltage HV kV"]
             G_t3.edges[u, v]["Voltage LV2 kV"] = G_t3_2.edges[u, v]["Voltage LV2 kV"]
+            G_t3.edges[u, v]["Positive Sequence Impedance R % on 100MVA base (HV-LV2)"] = G_t3_2.edges[u, v]["Positive Sequence Impedance R % on 100MVA base (HV-LV2)"]
             G_t3.edges[u, v]["Transformer Rating MVA Summer HV"] = G_t3_2.edges[u, v]["Transformer Rating MVA Summer HV"]
             G_t3.edges[u, v]["Transformer Rating MVA Winter HV"] = G_t3_2.edges[u, v]["Transformer Rating MVA Winter HV"]
             G_t3.edges[u, v]["Transformer Rating MVA Summer LV2"] = G_t3_2.edges[u, v]["Transformer Rating MVA Summer LV2"]
@@ -249,6 +294,9 @@ def create_power_ukpn_graph(gisnode, circuit, trans2w, trans3w, loads, geners):
             G_t3.nodes[v]["type"] = "GSP" if v in GSPs else "substation"
             # Link flow capacity
             G_t3.edges[u, v]["flow_cap"] = G_t3_2.edges[u, v]["Transformer Rating MVA Winter LV2"]  # or ["Transformer Rating MVA Summer LV2"]
+            # Calculate resistance
+            G_t3.edges[u, v]["resistance"] = G_t3_2.edges[u, v]["Positive Sequence Impedance R % on 100MVA base (HV-LV2)"] * G_t3_2.edges[u, v]["Transformer Rating MVA Winter LV2"]
+            G_t3.edges[u, v]["conductance"] = G_t3_2.edges[u, v]["G_base_HV_LV2"] * G_t3_2.edges[u, v]["Transformer Rating MVA Winter LV2"]
 
     G_t3.remove_edges_from(nx.selfloop_edges(G_t3))  # Remove self-loops
 
@@ -278,7 +326,9 @@ def create_power_ukpn_graph(gisnode, circuit, trans2w, trans3w, loads, geners):
                            Maximum_Demand_1920_PF_winter=row_w["Maximum Demand 19/20 PF"],
                            Firm_Capacity_MW_winter=row_w["Firm Capacity MW"],
                            Minimum_Load_Scaling_Factor_winter=row_w["Minimum Load Scaling Factor %"])
-                G.add_edge(n, load_name, flow_cap=row_w["Firm Capacity MW"])
+                G.add_edge(n, load_name, flow_cap=row_w["Firm Capacity MW"],
+                           resistance=0,
+                           conductance=200. * row_w["Firm Capacity MW"])
 
     # P.U.1.2.5 Create graph from edges dataframe - generators
     geners = geners.loc[geners["Connected / Accepted"] == "Connected"]  # only consider connected generators
@@ -293,29 +343,103 @@ def create_power_ukpn_graph(gisnode, circuit, trans2w, trans3w, loads, geners):
                            type="generator",
                            Connection_Voltage=row["Connection Voltage kV"],
                            Installed_Capacity=row["Installed Capacity MW"])
-                G.add_edge(gener_name, n, flow_cap=row["Installed Capacity MW"])
+                G.add_edge(gener_name, n, flow_cap=row["Installed Capacity MW"],
+                           resistance=0,
+                           conductance=200. * row["Installed Capacity MW"])
 
     # P.U.1.2.6 Insert additional GSP->HV connections missing from dataset
-    for _, row in circuit.iterrows():
-        u = row["GSP"]
-        v = row["From Substation"]
-        if not nx.has_path(G, u, v):
-            print("Added edge", u, "-", v)
-            G.add_edge(u, v)
-            G.edges[u, v]["Line Name"] = u + "-" + v
-            G.edges[u, v]["GSP"] = u
-            G.edges[u, v]["From x"] = G.nodes[u]["pos"][0]
-            G.edges[u, v]["From y"] = G.nodes[u]["pos"][1]
-            G.edges[u, v]["To x"] = G.nodes[v]["pos"][0]
-            G.edges[u, v]["To y"] = G.nodes[v]["pos"][1]
-            G.edges[u, v]["Circuit Length km"] = util.haversine(G.nodes[u]["pos"][0], G.nodes[u]["pos"][1],
-                                                                G.nodes[v]["pos"][0], G.nodes[v]["pos"][1])
-            G.edges[u, v]["Operating Voltage kV"] = row["Operating Voltage kV"]
-            G.edges[u, v]["Rating Amps Summer"] = row["Rating Amps Summer"]
-            G.edges[u, v]["Rating Amps Winter"] = row["Rating Amps Winter"]
-            G.edges[u, v]["flow_cap"] = G.edges[u, v]["Operating Voltage kV"] / 1000 * G.edges[u, v]["Rating Amps Winter"]
+    # for _, row in circuit.iterrows():
+    #     u = row["GSP"]
+    #     v = row["From Substation"]
+    #     if not nx.has_path(G, u, v):
+    #         # print("Added edge", u, "-", v)  # DEBUG
+    #         G.add_edge(u, v)
+    #         G.edges[u, v]["Line Name"] = u + "-" + v
+    #         G.edges[u, v]["GSP"] = u
+    #         G.edges[u, v]["From x"] = G.nodes[u]["pos"][0]
+    #         G.edges[u, v]["From y"] = G.nodes[u]["pos"][1]
+    #         G.edges[u, v]["To x"] = G.nodes[v]["pos"][0]
+    #         G.edges[u, v]["To y"] = G.nodes[v]["pos"][1]
+    #         G.edges[u, v]["Circuit Length km"] = util.haversine(G.nodes[u]["pos"][0], G.nodes[u]["pos"][1],
+    #                                                             G.nodes[v]["pos"][0], G.nodes[v]["pos"][1])
+    #         G.edges[u, v]["Operating Voltage kV"] = row["Operating Voltage kV"]
+    #         G.edges[u, v]["Rating Amps Summer"] = row["Rating Amps Summer"]
+    #         G.edges[u, v]["Rating Amps Winter"] = row["Rating Amps Winter"]
+    #         G.edges[u, v]["flow_cap"] = G.edges[u, v]["Operating Voltage kV"] / 1000 * G.edges[u, v]["Rating Amps Winter"]
+    #         # Calculate resistance
+    #         G.edges[u, v]["resistance"] = row["Positive Sequence Impedance [R] % on 100MVA base"] * G.edges[u, v]["flow_cap"]
+    #         G.edges[u, v]["conductance"] = row["G_base"] * G.edges[u, v]["flow_cap"]
 
-    # P.U.1.2.7 Assign node thruflow capacities
+    # P.U.1.2.7 Add transmission and traction circuits
+    G_txc = nx.from_pandas_edgelist(txcirc, source="From Substation", target="To Substation",
+                                    edge_attr=["Line Name",
+                                               "From x", "From y",
+                                               "To x", "To y",
+                                               "Operating Voltage kV",
+                                               "Rating Amps Summer", "Rating Amps Winter",
+                                               "G_base"],
+                                    create_using=nx.DiGraph)
+
+    for u, v in G_txc.edges():
+        # Node attributes
+        G_txc.nodes[u]["pos"] = (G_txc.edges[u, v]["From x"], G_txc.edges[u, v]["From y"])
+        G_txc.nodes[v]["pos"] = (G_txc.edges[u, v]["To x"], G_txc.edges[u, v]["To y"])
+        un = gisnode.loc[gisnode["Location"] == u]
+        ud = un["Dataset"].values[0]
+        G_txc.nodes[u]["type"] = "GSP" if u in GSPs \
+            else "substation_transmission" if ud == "National Grid" \
+            else "substation_traction" if ud == "OSM" \
+            else "substation"
+        vn = gisnode.loc[gisnode["Location"] == v]
+        vd = vn["Dataset"].values[0]
+        G_txc.nodes[v]["type"] = "GSP" if v in GSPs \
+            else "substation_transmission" if vd == "National Grid" \
+            else "substation_traction" if vd == "OSM" \
+            else "substation"
+        # Link flow capacity
+        G_txc.edges[u, v]["flow_cap"] = G_txc.edges[u, v]["Operating Voltage kV"] / 1000 \
+                                      * G_txc.edges[u, v]["Rating Amps Winter"]
+        # Calculate resistance
+        G_txc.edges[u, v]["conductance"] = G_txc.edges[u, v]["G_base"] * G_txc.edges[u, v]["flow_cap"]
+
+    G_txc.remove_edges_from(nx.selfloop_edges(G_txc))  # Remove self-loops
+
+    # P.U.1.2.7 Add transmission and traction transformers
+    G_txt = nx.from_pandas_edgelist(txtran, source="HV Substation", target="LV Substation",
+                                   edge_attr=["HV x", "HV y",
+                                              "LV x", "LV y",
+                                              "Voltage HV kV", "Voltage LV kV",
+                                              "Transformer Rating Summer MVA", "Transformer Rating Winter MVA",
+                                              "G_base"],
+                                   create_using=nx.DiGraph)
+
+    for u, v in G_txt.edges():
+        # Node attributes
+        G_txt.nodes[u]["pos"] = (G_txt.edges[u, v]["HV x"], G_txt.edges[u, v]["HV y"])
+        G_txt.nodes[v]["pos"] = (G_txt.edges[u, v]["LV x"], G_txt.edges[u, v]["LV y"])
+        un = gisnode.loc[gisnode["Location"] == u]
+        ud = un["Dataset"].values[0]
+        G_txt.nodes[u]["type"] = "GSP" if u in GSPs \
+            else "substation_transmission" if ud == "National Grid" \
+            else "substation_traction" if ud == "OSM" \
+            else "substation"
+        vn = gisnode.loc[gisnode["Location"] == v]
+        vd = vn["Dataset"].values[0]
+        G_txt.nodes[v]["type"] = "GSP" if v in GSPs \
+            else "substation_transmission" if vd == "National Grid" \
+            else "substation_traction" if vd == "OSM" \
+            else "substation"
+        # Link flow capacity
+        G_txt.edges[u, v]["flow_cap"] = G_txt.edges[u, v]["Transformer Rating Winter MVA"]  # or ["Transformer Rating Summer MVA"]
+        # Calculate resistance
+        G_txt.edges[u, v]["conductance"] = G_txt.edges[u, v]["G_base"] * G_txt.edges[u, v]["flow_cap"]
+
+    G_txt.remove_edges_from(nx.selfloop_edges(G_txt))  # Remove self-loops
+
+    G = nx.compose(G, nx.compose(G_txc, G_txt))  # Add transmission network into G
+    G.remove_edges_from(nx.selfloop_edges(G))  # Remove self-loops
+
+    # P.U.1.2.9 Assign node thruflow capacities
     for n in G.nodes():
         predecessors = list(G.predecessors(n))
         successors = list(G.successors(n))
@@ -331,6 +455,7 @@ def flowcalc_power_ukpn_graph(G):
     # Duplicate subgraphs in network (generalised)
     for subG in util.weakly_connected_component_subgraphs(G, copy=True):
         constraints = list()
+        HARD = True
 
         # P.U.2.1 Initialise flows
         # Add link flows as variables
@@ -341,8 +466,10 @@ def flowcalc_power_ukpn_graph(G):
             subG.nodes[n]["flow_out"] = 0.
             subG.nodes[n]["flow_in"] = cp.Variable(nonneg=True, name="flow_in_{" + str(n) + "}") \
                 if subG.nodes[n]["type"] == "GSP" else 0.
+            # Soft constraint - let's see if we can trip the generators where there is excessive demand
             subG.nodes[n]["flow_gen"] = cp.Variable(nonneg=True, name="flow_gen_{" + str(n) + "}") \
                 if subG.nodes[n]["type"] == "generator" else 0.
+            # Hard constraint - we don't need more electricity supplied than the demand!
             subG.nodes[n]["flow_con"] = subG.nodes[n]["Maximum_Demand_1920_MW_winter"] \
                 if subG.nodes[n]["type"] == "load" else 0.
 
@@ -362,6 +489,13 @@ def flowcalc_power_ukpn_graph(G):
                                ==
                                sum([subG.edges[n, s]["flow"] for s in successors])
                                + subG.nodes[n]["flow_out"] + subG.nodes[n]["flow_con"])
+            # Hard constraint for generators
+            if HARD and subG.nodes[n]["type"] == "generator":
+                constraints.append(subG.nodes[n]["flow_gen"] <= subG.nodes[n]["Installed_Capacity"])
+        # Hard constraint for cables & lines
+        # if HARD:
+        #     for u, v in subG.edges():
+        #         constraints.append(subG.edges[u, v]["flow"] <= subG.edges[u, v]["flow_cap"])
         # Overall subgraph flow balance
         constraints.append(sum([subG.nodes[n]["flow_in"] + subG.nodes[n]["flow_gen"] for n in subG.nodes()])
                            ==
@@ -375,9 +509,16 @@ def flowcalc_power_ukpn_graph(G):
         #                 print(constr)
 
         # P.U.2.3 Solve optimisation problem to minimise line capacities exceeding
-        objective = cp.Minimize(sum([subG.edges[u, v]["flow"] - subG.edges[u, v]["flow_cap"] for u, v in subG.edges()]))
+        if HARD:
+            objective = cp.Minimize(sum([subG.edges[u, v]["flow"] - subG.edges[u, v]["flow_cap"]
+                                         for u, v in subG.edges()]))
+        else:
+            objective = cp.Minimize(sum([subG.edges[u, v]["flow"] - subG.edges[u, v]["flow_cap"]
+                                         for u, v in subG.edges()])
+                                    + sum([subG.nodes[n]["flow_gen"] - subG.nodes[n]["Installed_Capacity"]
+                                           for n in subG.nodes() if subG.nodes[n]["type"] == "generator"]))
         flow_balance_model = cp.Problem(objective, constraints)
-        flow_balance_model.solve(solver=cp.OSQP, verbose=True, eps_abs=1.e-4, eps_rel=1.e-4)
+        flow_balance_model.solve(solver=cp.OSQP, verbose=True, eps_abs=1.e-5, eps_rel=1.e-5)
 
         # DEBUG - For troubleshooting if constraints are satisfied
         if flow_balance_model.status == cp.OPTIMAL:
@@ -421,7 +562,7 @@ def flowcalc_power_ukpn_graph(G):
         # P.U.2.4 Assign flows back to original graph
         for u, v in subG.edges():
             G.edges[u, v]["flow"] = subG.edges[u, v]["flow"].value \
-                if isinstance(subG.edges[u, v]["flow"], cp.Variable) \
+                if (isinstance(subG.edges[u, v]["flow"], cp.Variable) and subG.edges[u, v]["flow"].value is not None) \
                 else subG.edges[u, v]["flow"] if isinstance(subG.edges[u, v]["flow"], (float, int)) else 0.
             G.edges[u, v]["pct_flow_cap"] = G.edges[u, v]["flow"] / G.edges[u, v]["flow_cap"]
         for n in subG.nodes():
@@ -437,13 +578,19 @@ def flowcalc_power_ukpn_graph(G):
 # P.U.3.1 Flow check
 def flow_check(G):
     for u, v in G.edges():
-        if (G.edges[u, v]["flow"] > G.edges[u, v]["flow_cap"]) \
-                or (G.edges[u, v]["flow"] == 0) or (G.edges[u, v]["flow_cap"] == 0):
-            print("Link Warning: ", u, v, G.edges[u, v]["flow"], G.edges[u, v]["flow_cap"])
+        if G.edges[u, v]["flow"] == 0:
+            print("Link Warning - Zero Flow: ", u, v, G.edges[u, v]["flow"], G.edges[u, v]["flow_cap"])
+        elif G.edges[u, v]["flow_cap"] == 0:
+            print("Link Warning - Zero Capacity: ", u, v, G.edges[u, v]["flow"], G.edges[u, v]["flow_cap"])
+        elif G.edges[u, v]["flow"] > G.edges[u, v]["flow_cap"]:
+            print("Link Warning - Capacity Exceeded: ", u, v, G.edges[u, v]["flow"], G.edges[u, v]["flow_cap"])
     for n in G.nodes():
-        if (G.nodes[n]["thruflow"] > G.nodes[n]["thruflow_cap"]) \
-                or (G.nodes[n]["thruflow"] == 0) or (G.nodes[n]["thruflow_cap"] == 0):
-            print("Node Warning: ", n, G.nodes[n]["thruflow"], G.nodes[n]["thruflow_cap"])
+        if G.nodes[n]["thruflow"] == 0:
+            print("Node Warning - Zero Thruflow: ", n, G.nodes[n]["thruflow"], G.nodes[n]["thruflow_cap"])
+        elif G.nodes[n]["thruflow_cap"] == 0:
+            print("Node Warning - Zero Capacity: ", n, G.nodes[n]["thruflow"], G.nodes[n]["thruflow_cap"])
+        elif G.nodes[n]["thruflow"] > G.nodes[n]["thruflow_cap"]:
+            print("Node Warning - Capacity Exceeded: ", n, G.nodes[n]["thruflow"], G.nodes[n]["thruflow_cap"])
 
 
 # P.U.3.2 Calculate centralities
@@ -453,11 +600,11 @@ def calc_centrality(G):
     ecfb = dict()
 
     for subG in util.weakly_connected_component_subgraphs(G, copy=True):
-        cfb.update(nx.current_flow_betweenness_centrality(subG.to_undirected(), normalized=False, weight="flow_cap"))
+        cfb.update(nx.current_flow_betweenness_centrality(subG.to_undirected(), normalized=False, weight="conductance"))
 
-        eb.update(nx.edge_betweenness_centrality(G, normalized=True, weight="running_time_min"))
+        eb.update(nx.edge_betweenness_centrality(G, normalized=True, weight="resistance"))
         ecfb.update(nx.edge_current_flow_betweenness_centrality(subG.to_undirected(), normalized=False,
-                                                                weight="flow_cap"))
+                                                                weight="conductance"))
 
     nx.set_node_attributes(G, cfb, 'current_flow_betweenness')
 
@@ -477,8 +624,8 @@ if __name__ == "__main__":
     try:
         G = pickle.load(open(r'data/power_ukpn/out/power_ukpn_G.pkl', "rb"))
     except IOError:
-        gisnode, circuit, trans2w, trans3w, loads, geners = load_power_ukpn_data()
-        G = create_power_ukpn_graph(gisnode, circuit, trans2w, trans3w, loads, geners)
+        gisnode, circuit, trans2w, trans3w, loads, geners, txcirc, txtran = load_power_ukpn_data()
+        G = create_power_ukpn_graph(gisnode, circuit, trans2w, trans3w, loads, geners, txcirc, txtran)
         try:
             pickle.dump(G, open(r'data/power_ukpn/out/power_ukpn_G.pkl', 'wb+'))
         except FileNotFoundError as e:
@@ -518,13 +665,17 @@ if __name__ == "__main__":
     try:
         edgelist = pd.DataFrame(columns=["From", "To",
                                          "flow", "flow_cap", "pct_flow_cap",
-                                         "edge_betweenness", "edge_current_flow_betweenness"])
+                                         "edge_betweenness", "edge_current_flow_betweenness",
+                                         # "resistance",
+                                         "conductance"])
         for u, v in G_flow.edges():
             series_obj = pd.Series([u, v,
                                     G_flow.edges[u, v]["flow"], G_flow.edges[u, v]["flow_cap"],
                                     G_flow.edges[u, v]["pct_flow_cap"],
                                     G_flow.edges[u, v]["edge_betweenness"],
-                                    G_flow.edges[u, v]["edge_current_flow_betweenness"]],
+                                    G_flow.edges[u, v]["edge_current_flow_betweenness"],
+                                    # G_flow.edges[u, v]["resistance"],
+                                    G_flow.edges[u, v]["conductance"]],
                                    index=edgelist.columns)
             edgelist = edgelist.append(series_obj, ignore_index=True)
         edgelist.to_excel(r'data/power_ukpn/out/power_ukpn_edgelist.xlsx', index=True)
@@ -532,11 +683,23 @@ if __name__ == "__main__":
         print(e)
 
     # P.U.7 Add colours and export map plot
-    node_colors = [POWER_COLORS.get(G_flow.nodes[node]["type"], "#000000") for node in G_flow.nodes()]
-    edge_colors = [POWER_COLORS.get("cable", "#000000") for u, v in G_flow.edges()]  # FYI assumes underground cable
+    G_flow_undir = G_flow.to_undirected()
+    
+    node_colors = [POWER_COLORS.get(G_flow_undir.nodes[node]["type"], "#000000") for node in G_flow_undir.nodes()]
+    edge_colors = [POWER_COLORS.get("cable", "#000000") for u, v in G_flow_undir.edges()]  # FYI assumes underground cable
+    widths = [G_flow_undir.edges[u, v]["edge_current_flow_betweenness"] for u, v in G_flow_undir.edges()]
+    widths = np.log10(widths)
+    widths = 3. * (widths - min(widths)) / (max(widths) - min(widths)) + 0.1
+    node_sizes = [G_flow_undir.nodes[node]["current_flow_betweenness"] for node in G_flow_undir.nodes()]
+    node_sizes = np.log10([max(1.e-4, x) for x in node_sizes])
+    node_sizes = 100. * (node_sizes - min(node_sizes)) / (max(node_sizes) - min(node_sizes)) + 0.1
+    # widths = [np.log10(max(1.e-6, G_flow_undir.edges[u, v]["edge_current_flow_betweenness"]))/2. + 6.5/2.
+    #           for u, v in G_flow_undir.edges()]
+    # node_sizes = [np.log(max(1.e-4, G_flow_undir.nodes[node]["current_flow_betweenness"]))/4. + 1.5
+    #               for node in G_flow_undir.nodes()]
 
-    nx.draw(G_flow, pos=nx.get_node_attributes(G_flow, 'pos'), node_size=5,
-            node_color=node_colors, edge_color=edge_colors)
+    nx.draw(G_flow_undir, pos=nx.get_node_attributes(G_flow_undir, 'pos'),
+            node_color=node_colors, edge_color=edge_colors, node_size=5)  # node_size=node_sizes, width=widths)
     plt.savefig("data/power_ukpn/img/power_UKPN.png")
     plt.savefig("data/power_ukpn/img/power_UKPN.svg")
     plt.show()
