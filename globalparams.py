@@ -1,10 +1,12 @@
 # https://www.w3schools.com/colors/colors_wheels.asp
 
 POWER_COLORS = {
-    "cable": "#336600",
-    "line": "#000099",
+    "cable": "#000000",  # 336600
+    "line": "#000000",  # #000099
     "minor_line": "#6666ff",
     "substation": "#FE2712",
+    "substation_transmission": "#990000",
+    "substation_traction": "#FF33CC",
     "sub_station": "#FE2712",
     "transformer": "#FB9902",
     "terminal": "#FC600A",
@@ -58,3 +60,4 @@ TRANSPORT_LINE_PP_EPS = 0  # FIXME disabled first, used to be 0.005
 TRANSPORT_PROXIMITY_THRESHOLD = 0.6
 
 LOAD_CAP = 1.2
+TRAIN_DUR_THRESHOLD_MIN = 1e5  # 60

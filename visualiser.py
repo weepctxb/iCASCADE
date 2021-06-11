@@ -8,7 +8,7 @@ from globalparams import POWER_COLORS, TRANSPORT_COLORS, LONDON_COORDS
 
 def visualiser_power_osm():
 
-    power_osm_G = pickle.load(open(r'data/power_osm/out/power_OSM_G.pkl', "rb"))
+    power_osm_G = pickle.load(open(r'data/power_osm_full/out/power_OSM_G.pkl', "rb"))
 
     london_power_osm_map = folium.Map(location=LONDON_COORDS, zoom_start=10, prefer_canvas=True)
 
@@ -237,5 +237,5 @@ def visualiser_transport_combined():
 if __name__ == "__main__":
     # visualiser_power_osm()
     visualiser_power_ukpn()
-    visualiser_transport_multiplex()
+    # visualiser_transport_multiplex()
     # visualiser_transport_osm()

@@ -5,4 +5,6 @@ __pycache__
 data
 test
 test.py
+test_*.py
+temp_*.css
 backup
