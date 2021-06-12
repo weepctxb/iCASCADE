@@ -7,11 +7,10 @@ import json
 import numpy as np
 
 from globalparams import TRANSPORT_COLORS, TRAIN_DUR_THRESHOLD_MIN
+from util import linear_cluster, transport_calc_centrality
+
 
 # T.M.1.1 Load nodes and edges data
-from util import linear_cluster
-
-
 def load_transport_multiplex_data():
 
     # T.M.1.1.1 Load nodes
@@ -120,7 +119,7 @@ def create_transport_multiplex_graph(nodes, edges, odmat, capac):
             G.nodes[n]["thruflow_cap"] += G.edges[npred, n]["flow_cap"]
         G.nodes[n]["thruflow_cap"] = round(G.nodes[n]["thruflow_cap"] / 2)  # to avoid double-counting
 
-    return G, pos
+    return G
 
 
 # T.M.2.1 Calculate flows for networkx graph
@@ -184,7 +183,7 @@ def flowcalc_transport_multiplex_graph(G, odmat):
         # Initialise through flows
         G.nodes[n]["thruflow"] = 0
         # Calculate through flows
-        for ne in G.neighbors(n):
+        for ne in G.neighbors(n):  # this considers only successors for digraph
             G.nodes[n]["thruflow"] += G.edges[n, ne]["flow"]
 
     # T.M.2.1.4 Assign baseline link flow % capacity utilised
@@ -250,35 +249,6 @@ def flow_check(G):
             print("Node Warning: ", n, G.nodes[n]["thruflow"], G.nodes[n]["thruflow_cap"])
 
 
-# T.M.4.2 Calculate and assign centralities by running time
-def calc_centrality(G):
-    for u, v in G.edges():
-        G.edges[u, v]["recip_running_time_min"] = 1. / max(1., G.edges[u, v]["running_time_min"])
-
-    bb = nx.betweenness_centrality(G, normalized=True, weight="running_time_min")
-    cc = nx.closeness_centrality(G, distance="running_time_min")
-    cfb = nx.current_flow_betweenness_centrality(G.to_undirected(), normalized=False, weight="recip_running_time_min")
-
-    eb = nx.edge_betweenness_centrality(G, normalized=True, weight="running_time_min")
-    ecfb = nx.edge_current_flow_betweenness_centrality(G.to_undirected(), normalized=False, weight="recip_running_time_min")
-
-    nx.set_node_attributes(G, bb, 'betweenness')
-    nx.set_node_attributes(G, cc, 'closeness')
-    nx.set_node_attributes(G, cfb, 'current_flow_betweenness')
-
-    nx.set_edge_attributes(G, eb, 'edge_betweenness')
-    for u, v in G.edges():
-        try:
-            G.edges[u, v]["edge_current_flow_betweenness"] = ecfb[(u, v)]
-        except Exception as e:
-            G.edges[u, v]["edge_current_flow_betweenness"] = ecfb[(v, u)]  # PATCH
-
-    # Calculate node sizes
-    # node_sizes = [int(bb[node] * 1000) for node in bb]
-
-    return G
-
-
 # T.M.x Graph stats summary
 def stats_summary(G):
     print("Stats summary:")
@@ -313,7 +283,7 @@ if __name__ == "__main__":
         G = pickle.load(open(r'data/transport_multiplex/out/transport_multiplex_G.pkl', "rb"))
     except IOError:
         nodes, edges, odmat, capac = load_transport_multiplex_data()
-        G, pos = create_transport_multiplex_graph(nodes, edges, odmat, capac)
+        G = create_transport_multiplex_graph(nodes, edges, odmat, capac)
         try:
             pickle.dump(G, open(r'data/transport_multiplex/out/transport_multiplex_G.pkl', 'wb+'))
         except FileNotFoundError as e:
@@ -343,11 +313,19 @@ if __name__ == "__main__":
         except FileNotFoundError as e:
             print(e)
 
-    # T.M.4 Check flows
+    # T.M.4 Check flows and calculate centrality
     # flow_check(G_skele)
-    G_skele = calc_centrality(G_skele)
+    G_skele = transport_calc_centrality(G_skele)
+    try:
+        pickle.dump(G_skele, open(r'data/transport_multiplex/out/transport_multiplex_G_flow_skele.pkl', 'wb+'))
+    except FileNotFoundError as e:
+        print(e)
     # flow_check(G_flow)
-    G_flow = calc_centrality(G_flow)
+    G_flow = transport_calc_centrality(G_flow)
+    try:
+        pickle.dump(G_flow, open(r'data/transport_multiplex/out/transport_multiplex_G_flow.pkl', 'wb+'))
+    except FileNotFoundError as e:
+        print(e)
     # Graph stats summary
     # stats_summary(G)
     # stats_summary(G_flow)

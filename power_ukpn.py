@@ -8,7 +8,7 @@ import numpy as np
 import cvxpy as cp
 
 from globalparams import POWER_COLORS
-import util
+from util import weakly_connected_component_subgraphs, power_calc_centrality
 
 
 # P.U.1.1 Load nodes and edges data
@@ -453,7 +453,7 @@ def create_power_ukpn_graph(gisnode, circuit, trans2w, trans3w, loads, geners, t
 def flowcalc_power_ukpn_graph(G):
 
     # Duplicate subgraphs in network (generalised)
-    for subG in util.weakly_connected_component_subgraphs(G, copy=True):
+    for subG in weakly_connected_component_subgraphs(G, copy=True):
         constraints = list()
         HARD = True
 
@@ -465,19 +465,13 @@ def flowcalc_power_ukpn_graph(G):
         for n in subG.nodes():
             subG.nodes[n]["flow_out"] = 0.
             subG.nodes[n]["flow_in"] = cp.Variable(nonneg=True, name="flow_in_{" + str(n) + "}") \
-                if subG.nodes[n]["type"] == "GSP" else 0.
+                if subG.nodes[n]["type"] == "substation_transmission" else 0.  # "GSP" else 0. # if only distribution network evaluated
             # Soft constraint - let's see if we can trip the generators where there is excessive demand
             subG.nodes[n]["flow_gen"] = cp.Variable(nonneg=True, name="flow_gen_{" + str(n) + "}") \
                 if subG.nodes[n]["type"] == "generator" else 0.
             # Hard constraint - we don't need more electricity supplied than the demand!
             subG.nodes[n]["flow_con"] = subG.nodes[n]["Maximum_Demand_1920_MW_winter"] \
                 if subG.nodes[n]["type"] == "load" else 0.
-
-        # DEBUG - For troubleshooting
-        if any([subG.nodes[n]["type"] == "GSP" for n in subG.nodes()]):
-            print("GSP found: " + str([n for n in subG.nodes() if subG.nodes[n]["type"] == "GSP"]))
-        else:
-            print("No GSP found for this subgrid!")
 
         # P.U.2.2 Add constraints
         for n in subG.nodes():
@@ -593,31 +587,6 @@ def flow_check(G):
             print("Node Warning - Capacity Exceeded: ", n, G.nodes[n]["thruflow"], G.nodes[n]["thruflow_cap"])
 
 
-# P.U.3.2 Calculate centralities
-def calc_centrality(G):
-    cfb = dict()
-    eb = dict()
-    ecfb = dict()
-
-    for subG in util.weakly_connected_component_subgraphs(G, copy=True):
-        cfb.update(nx.current_flow_betweenness_centrality(subG.to_undirected(), normalized=False, weight="conductance"))
-
-        eb.update(nx.edge_betweenness_centrality(G, normalized=True, weight="resistance"))
-        ecfb.update(nx.edge_current_flow_betweenness_centrality(subG.to_undirected(), normalized=False,
-                                                                weight="conductance"))
-
-    nx.set_node_attributes(G, cfb, 'current_flow_betweenness')
-
-    nx.set_edge_attributes(G, eb, 'edge_betweenness')
-    for u, v in G.edges():
-        try:
-            G.edges[u, v]["edge_current_flow_betweenness"] = ecfb[(u, v)]
-        except Exception as e:
-            G.edges[u, v]["edge_current_flow_betweenness"] = ecfb[(v, u)]  # PATCH
-
-    return G
-
-
 if __name__ == "__main__":
 
     # P.U.1 Load networkx graph
@@ -636,6 +605,7 @@ if __name__ == "__main__":
         G_flow = pickle.load(open(r'data/power_ukpn/out/power_ukpn_G_flow.pkl', "rb"))
     except IOError:
         G_flow = flowcalc_power_ukpn_graph(G)
+        G_flow = power_calc_centrality(G_flow)
         try:
             pickle.dump(G_flow, open(r'data/power_ukpn/out/power_ukpn_G_flow.pkl', 'wb+'))
         except FileNotFoundError as e:
@@ -643,7 +613,6 @@ if __name__ == "__main__":
 
     # P.U.3 Check flows
     flow_check(G_flow)
-    G_flow = calc_centrality(G_flow)
 
     # P.U.4 Export graph nodelist
     try:

@@ -1,23 +1,10 @@
 from math import radians, cos, sin, asin, sqrt
 
 import networkx as nx
+import numpy as np
+import matplotlib.pyplot as plt
 
 from globalparams import POWER_LINE_PP_EPS
-import json
-import numpy as np
-
-
-class CustomEncoder(json.JSONEncoder):
-    """Custom JSON Encoder to handle numpy variables"""
-    def default(self, o):
-        if isinstance(o, np.integer):
-            return int(o)  # cast numpy int to vanilla int
-        elif isinstance(o, int):
-            return int(o)
-        elif isinstance(o, np.float):
-            return round(float(o), 6)  # cast numpy float to vanilla float
-        else:
-            return super().default(o)  # otherwise fall back to base implementation in JSONEncoder
 
 
 def haversine(lon1, lat1, lon2, lat2):
@@ -88,6 +75,7 @@ def douglas_peucker(linenodes, eps=POWER_LINE_PP_EPS):
 
 def weakly_connected_component_subgraphs(G, copy=True):
     """[Copied from deprecated version of networkx library] Generate weakly connected components as subgraphs.
+    For directed graphs only. Graph, node, and edge attributes are copied to the subgraphs by default.
 
     Parameters
     ----------
@@ -101,32 +89,6 @@ def weakly_connected_component_subgraphs(G, copy=True):
     -------
     comp : generator
         A generator of graphs, one for each weakly connected component of G.
-
-    Examples
-    --------
-    Generate a sorted list of weakly connected components, largest first.
-
-    >>> G = nx.path_graph(4, create_using=nx.DiGraph())
-    >>> G.add_path([10, 11, 12])
-    >>> [len(c) for c in sorted(nx.weakly_connected_component_subgraphs(G),
-    ...                         key=len, reverse=True)]
-    [4, 3]
-
-    If you only want the largest component, it's more efficient to
-    use max instead of sort.
-
-    >>> Gc = max(nx.weakly_connected_component_subgraphs(G), key=len)
-
-    See Also
-    --------
-    strongly_connected_components
-    connected_components
-
-    Notes
-    -----
-    For directed graphs only.
-    Graph, node, and edge attributes are copied to the subgraphs by default.
-
     """
     for comp in nx.weakly_connected_components(G):
         if copy:
@@ -241,3 +203,212 @@ def linear_cluster(G, nodes_to_cluster):
         G1.remove_node(n)
 
     return G1
+
+
+def transport_calc_centrality(G):
+    """Calculate and assign transport network centralities by running time"""
+
+    for u, v in G.edges():
+        G.edges[u, v]["recip_running_time_min"] = 1. / max(1., G.edges[u, v]["running_time_min"])
+
+    bb = nx.betweenness_centrality(G, normalized=True, weight="running_time_min")
+    cc = nx.closeness_centrality(G, distance="running_time_min")
+    cfb = nx.current_flow_betweenness_centrality(G.to_undirected(), normalized=False, weight="recip_running_time_min")
+
+    eb = nx.edge_betweenness_centrality(G, normalized=True, weight="running_time_min")
+    ecfb = nx.edge_current_flow_betweenness_centrality(G.to_undirected(), normalized=False,
+                                                       weight="recip_running_time_min")
+
+    nx.set_node_attributes(G, bb, 'betweenness')
+    nx.set_node_attributes(G, cc, 'closeness')
+    nx.set_node_attributes(G, cfb, 'current_flow_betweenness')
+
+    nx.set_edge_attributes(G, eb, 'edge_betweenness')
+    for u, v in G.edges():
+        try:
+            G.edges[u, v]["edge_current_flow_betweenness"] = ecfb[(u, v)]
+        except Exception as e:
+            G.edges[u, v]["edge_current_flow_betweenness"] = ecfb[(v, u)]  # PATCH
+
+    return G
+
+
+def transport_to_undirected(G):
+    """Further simplifies directed transport network to undirected network"""
+
+    G_undir = nx.create_empty_copy(G, with_data=True)
+    for u, v in G.edges():
+        G_undir.add_edge(u, v)
+
+        for rev_attr in ["StationA", "StationB"]:
+            G_undir.edges[u, v][rev_attr] = G.edges[u, v][rev_attr]
+
+        for sum_attr in ["flow", "flow_cap"]:
+            if G.has_edge(v, u):  # i.e. both directions exist
+                G_undir.edges[u, v][sum_attr] = G.edges[u, v][sum_attr] + G.edges[v, u][sum_attr]
+            else:  # only one direction exists
+                G_undir.edges[u, v][sum_attr] = G.edges[u, v][sum_attr]
+
+        for avg_attr in ["running_time_min", "Distance"]:
+            if G.has_edge(v, u):  # i.e. both directions exist
+                G_undir.edges[u, v][avg_attr] = np.nanmean([G.edges[u, v][avg_attr], G.edges[v, u][avg_attr]])
+            else:  # only one direction exists
+                G_undir.edges[u, v][avg_attr] = G.edges[u, v][avg_attr]
+
+    for u, v in G.edges():
+        G_undir.edges[u, v]["pct_flow_cap"] = G_undir.edges[u, v]["flow"] / G_undir.edges[u, v]["flow_cap"]
+
+    # FIXME We may not actually need to do this here, but later on at each iteration of the simulation
+    G_undir = transport_calc_centrality(G_undir)
+
+    return G_undir
+
+
+def transport_compare_flow_dur_distribution():
+    """Check fit with power law, and fit between estimated & actual flows & travel durations"""
+
+    import json
+    import pandas as pd
+    import matplotlib.pyplot as plt
+
+    from globalparams import TRAIN_DUR_THRESHOLD_MIN
+
+    # Estimated flows - all s-t pairs
+    with open(r'data/transport_multiplex/flow/shortest_paths.json', 'r') as json_file:
+        shortest_paths = json.load(json_file)
+
+    est_flow_dist = list()
+
+    for s in shortest_paths:
+        for t in shortest_paths[s]:
+            for _ in range(round(shortest_paths[s][t]["flow"])):
+                if shortest_paths[s][t]["travel_time"] <= TRAIN_DUR_THRESHOLD_MIN:
+                    est_flow_dist.append(shortest_paths[s][t]["travel_time"])
+
+    # Actual flows - all s-t pairs
+    travel_times = pd.read_excel("data/transport_multiplex/raw/transport_multiplex.xlsx",
+                                 sheet_name="power_law_check", header=0)
+    actual_flow_dist = list()
+
+    for index, row in travel_times.iterrows():
+        for _ in range(round(row["AM_peak_perhour"])):
+            try:
+                actual_flow_dist.append(row["nonzero_median_MIN"])
+            except Exception:
+                continue
+
+    an, abins, apatches = plt.hist(actual_flow_dist, bins=100)
+    en, ebins, epatches = plt.hist(est_flow_dist, bins=100)
+    plt.clf()
+    plt.loglog(abins[:-1], an[:], "b.")
+    plt.loglog(ebins[:-1], en[:], "r.")
+    plt.title("Distribution of trip duration (actual and estimated) within London")
+    plt.xlabel('Trip duration (min)')
+    plt.ylabel('No. of trips (unique)')
+    plt.show()
+
+    # FYI Distribution of trip durations won't match exactly because we are comparing (only) the
+    #  train travel timings with stopping (w/o transfer or waiting times) vs. actual measured durations
+    #  But this is not a major cause of concern because we only use the trip durations as a weight measure
+    #  for shortest path calculations.
+
+
+def power_calc_centrality(G):
+    """Calculate and assign centralities by conductance"""
+    cfb = dict()
+    eb = dict()
+    ecfb = dict()
+
+    for subG in weakly_connected_component_subgraphs(G, copy=True):
+        cfb.update(nx.current_flow_betweenness_centrality(subG.to_undirected(), normalized=False, weight="conductance"))
+
+        eb.update(nx.edge_betweenness_centrality(G, normalized=True, weight="resistance"))
+        ecfb.update(nx.edge_current_flow_betweenness_centrality(subG.to_undirected(), normalized=False,
+                                                                weight="conductance"))
+
+    nx.set_node_attributes(G, cfb, 'current_flow_betweenness')
+
+    nx.set_edge_attributes(G, eb, 'edge_betweenness')
+    for u, v in G.edges():
+        try:
+            G.edges[u, v]["edge_current_flow_betweenness"] = ecfb[(u, v)]
+        except Exception as e:
+            G.edges[u, v]["edge_current_flow_betweenness"] = ecfb[(v, u)]  # PATCH
+
+    return G
+
+
+def power_to_undirected(G):
+    """Further simplifies directed power network to undirected network"""
+
+    G_undir = nx.create_empty_copy(G, with_data=True)
+    for u, v in G.edges():
+        G_undir.add_edge(u, v)
+
+        for rev_attr in ["GSP", "Circuit Length km", "Operating Voltage kV"]:
+            if rev_attr in G.edges[u, v]:
+                G_undir.edges[u, v][rev_attr] = G.edges[u, v][rev_attr]
+
+        for sum_attr in ["flow", "flow_cap"]:
+            if G.has_edge(v, u):  # i.e. both directions exist
+                G_undir.edges[u, v][sum_attr] = G.edges[u, v][sum_attr] + G.edges[v, u][sum_attr]
+            else:  # only one direction exists
+                G_undir.edges[u, v][sum_attr] = G.edges[u, v][sum_attr]
+
+        for avg_attr in ["conductance", "resistance"]:
+            if avg_attr in G.edges[u, v]:
+                if G.has_edge(v, u):  # i.e. both directions exist
+                    G_undir.edges[u, v][avg_attr] = np.nanmean([G.edges[u, v][avg_attr], G.edges[v, u][avg_attr]])
+                else:  # only one direction exists
+                    G_undir.edges[u, v][avg_attr] = G.edges[u, v][avg_attr]
+
+    for u, v in G.edges():
+        G_undir.edges[u, v]["pct_flow_cap"] = G_undir.edges[u, v]["flow"] / G_undir.edges[u, v]["flow_cap"]
+
+    # FIXME We may not actually need to do this here, but later on at each iteration of the simulation
+    G_undir = power_calc_centrality(G_undir)
+
+    return G_undir
+
+
+def network_plot_3D(G, angle):
+
+    from mpl_toolkits.mplot3d import Axes3D
+
+    # Get node positions
+    pos = nx.get_node_attributes(G, 'pos')
+
+    # Get the maximum number of edges adjacent to a single node
+    edge_max = max([G.degree(n) for n in G.nodes()])
+    # Define color range proportional to number of edges adjacent to a single node
+    colors = {n: plt.cm.plasma(G.degree(n) / edge_max) for n in G.nodes()}
+    # 3D network plot
+    with plt.style.context(('ggplot')):
+
+        fig = plt.figure(figsize=(10, 7))
+        ax = Axes3D(fig)
+
+        # Loop on the pos dictionary to extract the x,y,z coordinates of each node
+        for key, value in pos.items():
+            xi = value[0]
+            yi = value[1]
+            zi = value[2]
+
+            # Scatter plot
+            ax.scatter(xi, yi, zi, color=colors[key], s=20 + 20 * G.degree(key), edgecolors='k', alpha=0.7)
+
+        # Loop on the list of edges to get the x,y,z, coordinates of the connected nodes
+        # Those two points are the extrema of the line to be plotted
+        for i, j in enumerate(G.edges()):
+            x = np.array((pos[j[0]][0], pos[j[1]][0]))
+            y = np.array((pos[j[0]][1], pos[j[1]][1]))
+            z = np.array((pos[j[0]][2], pos[j[1]][2]))
+
+            # Plot the connecting lines
+            ax.plot(x, y, z, color='black', alpha=0.5)
+
+    # Set the initial view
+    ax.view_init(30, angle)
+    # Hide the axes
+    ax.set_axis_off()
+    plt.show()
