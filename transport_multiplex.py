@@ -87,8 +87,6 @@ def create_transport_multiplex_graph(nodes, edges, odmat, capac):
     nx.set_node_attributes(G, line, 'line')
     nx.set_node_attributes(G, NLC, 'NLC')
 
-    nx.set_node_attributes(G, "station", 'railway')
-
     # T.M.1.2.4 Assign baseline node inflows and outflows
     for n in G.nodes():
         nnlc = G.nodes[n]["NLC"]
@@ -118,6 +116,13 @@ def create_transport_multiplex_graph(nodes, edges, odmat, capac):
         for npred in G.predecessors(n):
             G.nodes[n]["thruflow_cap"] += G.edges[npred, n]["flow_cap"]
         G.nodes[n]["thruflow_cap"] = round(G.nodes[n]["thruflow_cap"] / 2)  # to avoid double-counting
+
+    # T.M.1.2.7 Clean attribute data
+    for n in G.nodes():
+        G.nodes[n]["type"] = "interchange" if G.nodes[n]["interchange"] else "station"
+    for u, v in G.edges():
+        G.edges[u, v].pop("StationA", None)
+        G.edges[u, v].pop("StationB", None)
 
     return G
 
@@ -331,18 +336,18 @@ if __name__ == "__main__":
     # stats_summary(G_flow)
 
     # T.M.5 Export graph nodelist
-    # try:
-    #     combined_nodelist = pd.DataFrame([i[1] for i in G_skele.nodes(data=True)], index=[i[0] for i in G_skele.nodes(data=True)])
-    #     combined_nodelist = combined_nodelist.rename_axis('full_id')
-    #     combined_nodelist.to_excel(r'data/transport_multiplex/out/transport_multiplex_nodelist.xlsx', index=True)
-    # except Exception as e:
-    #     print(e)
-    # try:
-    #     combined_nodelist = pd.DataFrame([i[1] for i in G_flow.nodes(data=True)], index=[i[0] for i in G_flow.nodes(data=True)])
-    #     combined_nodelist = combined_nodelist.rename_axis('full_id')
-    #     combined_nodelist.to_excel(r'data/transport_multiplex/out/transport_multiplex_nodelist_unsimpl.xlsx', index=True)
-    # except Exception as e:
-    #     print(e)
+    try:
+        combined_nodelist = pd.DataFrame([i[1] for i in G_skele.nodes(data=True)], index=[i[0] for i in G_skele.nodes(data=True)])
+        combined_nodelist = combined_nodelist.rename_axis('full_id')
+        combined_nodelist.to_excel(r'data/transport_multiplex/out/transport_multiplex_nodelist.xlsx', index=True)
+    except Exception as e:
+        print(e)
+    try:
+        combined_nodelist = pd.DataFrame([i[1] for i in G_flow.nodes(data=True)], index=[i[0] for i in G_flow.nodes(data=True)])
+        combined_nodelist = combined_nodelist.rename_axis('full_id')
+        combined_nodelist.to_excel(r'data/transport_multiplex/out/transport_multiplex_nodelist_unsimpl.xlsx', index=True)
+    except Exception as e:
+        print(e)
 
     # T.M.6 Export adjacency matrix
     # try:
@@ -357,44 +362,45 @@ if __name__ == "__main__":
     #     print(e)
 
     # T.M.7 Export graph edgelist
-    # try:
-    #     edgelist = pd.DataFrame(columns=["StationA_ID", "StationA", "StationA_NLC",
-    #                                      "StationB_ID", "StationB", "StationB_NLC",
-    #                                      "flow",
-    #                                      # "flow_capscal",
-    #                                      "flow_cap", "pct_flow_cap",
-    #                                      "actual_flow", "rel_error",
-    #                                      "edge_betweenness", "edge_current_flow_betweenness"])
-    #     link_loads = pd.read_excel("data/transport_multiplex/raw/transport_multiplex.xlsx",
-    #                                       sheet_name="link_loads", header=0)
-    #     for u, v in G_skele.edges():
-    #         if isinstance(u, int):
-    #             actual_flow = link_loads.loc[link_loads["From ID"] == u]
-    #         else:
-    #             u_list = [int(x) for x in u.split("-")]
-    #             actual_flow = link_loads.loc[link_loads["From ID"] == u_list[-1]]
-    #         if isinstance(v, int):
-    #             actual_flow = actual_flow.loc[link_loads["To ID"] == v]
-    #         else:
-    #             v_list = [int(x) for x in v.split("-")]
-    #             actual_flow = link_loads.loc[link_loads["To ID"] == v_list[0]]
-    #         actual_flow = np.nansum(actual_flow["AM Peak per hour"])
-    #         rel_error = abs(G_skele.edges[u, v]["flow"] - actual_flow) / max(1.e-5, actual_flow)
-    #         G_skele.edges[u, v]["rel_error"] = rel_error
-    #
-    #         series_obj = pd.Series([u, G_skele.nodes[u]["nodeLabel"], G_skele.nodes[u]["NLC"],
-    #                                 v, G_skele.nodes[v]["nodeLabel"], G_skele.nodes[v]["NLC"],
-    #                                 G_skele.edges[u, v]["flow"],
-    #                                 # G_skele.edges[u, v]["flow_capscal"],
-    #                                 G_skele.edges[u, v]["flow_cap"], G_skele.edges[u, v]["pct_flow_cap"],
-    #                                 actual_flow, rel_error,
-    #                                 G_skele.edges[u, v]["edge_betweenness"],
-    #                                 G_skele.edges[u, v]["edge_current_flow_betweenness"]],
-    #                                index=edgelist.columns)
-    #         edgelist = edgelist.append(series_obj, ignore_index=True)
-    #     edgelist.to_excel(r'data/transport_multiplex/out/transport_multiplex_edgelist.xlsx', index=True)
-    # except Exception as e:
-    #     raise e
+    try:
+        # edgelist = pd.DataFrame(columns=["StationA_ID", "StationA", "StationA_NLC",
+        #                                  "StationB_ID", "StationB", "StationB_NLC",
+        #                                  "flow",
+        #                                  # "flow_capscal",
+        #                                  "flow_cap", "pct_flow_cap",
+        #                                  "actual_flow", "rel_error",
+        #                                  "edge_betweenness", "edge_current_flow_betweenness"])
+
+        link_loads = pd.read_excel("data/transport_multiplex/raw/transport_multiplex.xlsx",
+                                          sheet_name="link_loads", header=0)
+        for u, v in G_skele.edges():
+            if isinstance(u, int):
+                actual_flow = link_loads.loc[link_loads["From ID"] == u]
+            else:
+                u_list = [int(x) for x in u.split("-")]
+                actual_flow = link_loads.loc[link_loads["From ID"] == u_list[-1]]
+            if isinstance(v, int):
+                actual_flow = actual_flow.loc[link_loads["To ID"] == v]
+            else:
+                v_list = [int(x) for x in v.split("-")]
+                actual_flow = link_loads.loc[link_loads["To ID"] == v_list[0]]
+            actual_flow = np.nansum(actual_flow["AM Peak per hour"])
+            rel_error = abs(G_skele.edges[u, v]["flow"] - actual_flow) / max(1.e-5, actual_flow)
+            G_skele.edges[u, v]["rel_error"] = rel_error
+
+        #     series_obj = pd.Series([u, G_skele.nodes[u]["nodeLabel"], G_skele.nodes[u]["NLC"],
+        #                             v, G_skele.nodes[v]["nodeLabel"], G_skele.nodes[v]["NLC"],
+        #                             G_skele.edges[u, v]["flow"],
+        #                             # G_skele.edges[u, v]["flow_capscal"],
+        #                             G_skele.edges[u, v]["flow_cap"], G_skele.edges[u, v]["pct_flow_cap"],
+        #                             actual_flow, rel_error,
+        #                             G_skele.edges[u, v]["edge_betweenness"],
+        #                             G_skele.edges[u, v]["edge_current_flow_betweenness"]],
+        #                            index=edgelist.columns)
+        #     edgelist = edgelist.append(series_obj, ignore_index=True)
+        # edgelist.to_excel(r'data/transport_multiplex/out/transport_multiplex_edgelist.xlsx', index=True)
+    except Exception as e:
+        raise e
 
     try:
         # edgelist = pd.DataFrame(columns=["StationA_ID", "StationA", "StationA_NLC",
@@ -404,6 +410,7 @@ if __name__ == "__main__":
         #                                  "flow_cap", "pct_flow_cap",
         #                                  "actual_flow", "rel_error",
         #                                  "edge_betweenness", "edge_current_flow_betweenness"])
+
         link_loads = pd.read_excel("data/transport_multiplex/raw/transport_multiplex.xlsx",
                                           sheet_name="link_loads", header=0)
         for u, v in G_flow.edges():
@@ -441,8 +448,8 @@ if __name__ == "__main__":
     node_colors = [TRANSPORT_COLORS.get(G_skele_undir.nodes[node]["line"], "#FF0000") for node in G_skele_undir.nodes()]
     edge_lines = nx.get_edge_attributes(G_skele_undir, "Line")
     edge_colors = [TRANSPORT_COLORS.get(edge_lines[u, v], "#808080") for u, v in G_skele_undir.edges()]
-    widths = [G_skele_undir.edges[u, v]["pct_flow_cap"] * 4 + 0.2 for u, v in G_skele_undir.edges()]
-    # widths = [min(8, G_skele_undir.edges[u, v]["rel_error"] * 4 + 0.2) for u, v in G_skele_undir.edges()]
+    # widths = [G_skele_undir.edges[u, v]["pct_flow_cap"] * 4 + 0.2 for u, v in G_skele_undir.edges()]
+    widths = [min(8, G_skele_undir.edges[u, v]["rel_error"] * 4 + 0.2) for u, v in G_skele_undir.edges()]
 
     nx.draw(G_skele_undir, pos=nx.get_node_attributes(G_skele_undir, 'pos'), node_size=5,
             node_color=node_colors, edge_color=edge_colors, width=widths)
@@ -455,8 +462,8 @@ if __name__ == "__main__":
     node_colors = [TRANSPORT_COLORS.get(G_flow_undir.nodes[node]["line"], "#FF0000") for node in G_flow_undir.nodes()]
     edge_lines = nx.get_edge_attributes(G_flow_undir, "Line")
     edge_colors = [TRANSPORT_COLORS.get(edge_lines[u, v], "#808080") for u, v in G_flow_undir.edges()]
-    widths = [G_flow_undir.edges[u, v]["pct_flow_cap"] * 4 + 0.2 for u, v in G_flow_undir.edges()]
-    # widths = [min(8, G_flow_undir.edges[u, v]["rel_error"] * 4 + 0.2) for u, v in G_flow_undir.edges()]
+    # widths = [G_flow_undir.edges[u, v]["pct_flow_cap"] * 4 + 0.2 for u, v in G_flow_undir.edges()]
+    widths = [min(8, G_flow_undir.edges[u, v]["rel_error"] * 4 + 0.2) for u, v in G_flow_undir.edges()]
 
     nx.draw(G_flow_undir, pos=nx.get_node_attributes(G_flow_undir, 'pos'), node_size=5,
             node_color=node_colors, edge_color=edge_colors, width=widths)
