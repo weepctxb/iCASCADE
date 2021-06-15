@@ -89,13 +89,13 @@ def create_power_ukpn_graph(gisnode, circuit, trans2w, trans3w, loads, geners, t
     # Perform clustering of nodes directly into substation names/locations
     circuit = circuit.groupby(["GSP", "From Substation", "To Substation"]). \
         agg({
-        "From Node": lambda x: ",".join(np.unique(x)),
+        "From Node": lambda x: "-".join(np.unique(x)),
         "From x": lambda x: np.nanmean(x),
         "From y": lambda x: np.nanmean(x),
-        "To Node": lambda x: ",".join(np.unique(x)),
+        "To Node": lambda x: "-".join(np.unique(x)),
         "To x": lambda x: np.nanmean(x),
         "To y": lambda x: np.nanmean(x),
-        "Line Name": lambda x: ",".join(np.unique(x)),
+        "Line Name": lambda x: "-".join(np.unique(x)),
         "Operating Voltage kV": lambda x: np.nanmean(x),
         "Positive Sequence Impedance [R] % on 100MVA base": lambda x: np.nanmean(x),
         "Positive Sequence Impedance [X] % on 100MVA base": lambda x: np.nanmean(x),
@@ -106,8 +106,10 @@ def create_power_ukpn_graph(gisnode, circuit, trans2w, trans3w, loads, geners, t
         "G_base": lambda x: np.nansum(x)
     }).reset_index()
 
-    # Get list of GSPs
+    # Get list of distribution network-level GSPs and transmission network-level GSPs
     GSPs = np.unique(circuit["GSP"].tolist())
+    TxGSPs = ["Iver 400kV", "Elstree 400kV", "Waltham Cross 400kV", "Tilbury 400kV",
+              "Northfleet East 400kV", "West Weybridge 400kV"]
 
     # Build graph
     G_c = nx.from_pandas_edgelist(circuit, source="From Substation", target="To Substation",
@@ -126,6 +128,8 @@ def create_power_ukpn_graph(gisnode, circuit, trans2w, trans3w, loads, geners, t
         G_c.nodes[v]["pos"] = (G_c.edges[u, v]["To x"], G_c.edges[u, v]["To y"])
         G_c.nodes[u]["type"] = "GSP" if u in GSPs else "substation"
         G_c.nodes[v]["type"] = "GSP" if v in GSPs else "substation"
+        G_c.nodes[u]["voltage"] = G_c.edges[u, v]["Operating Voltage kV"]
+        G_c.nodes[v]["voltage"] = G_c.edges[u, v]["Operating Voltage kV"]
         # Link flow capacity
         G_c.edges[u, v]["flow_cap"] = G_c.edges[u, v]["Operating Voltage kV"] / 1000 \
                                       * G_c.edges[u, v]["Rating Amps Winter"]
@@ -140,11 +144,11 @@ def create_power_ukpn_graph(gisnode, circuit, trans2w, trans3w, loads, geners, t
     # Perform clustering of nodes directly into substation names/locations
     trans2w = trans2w.groupby(["GSP", "HV Substation", "LV Substation"]). \
         agg({
-        "HV Node": lambda x: ",".join(np.unique(x)),
+        "HV Node": lambda x: "-".join(np.unique(x)),
         "HV x": lambda x: np.nanmean(x),
         "HV y": lambda x: np.nanmean(x),
         "Voltage HV kV": lambda x: np.nanmean(x),
-        "LV Node": lambda x: ",".join(np.unique(x)),
+        "LV Node": lambda x: "-".join(np.unique(x)),
         "LV x": lambda x: np.nanmean(x),
         "LV y": lambda x: np.nanmean(x),
         "Voltage LV kV": lambda x: np.nanmean(x),
@@ -175,6 +179,8 @@ def create_power_ukpn_graph(gisnode, circuit, trans2w, trans3w, loads, geners, t
         G_t2.nodes[v]["pos"] = (G_t2.edges[u, v]["LV x"], G_t2.edges[u, v]["LV y"])
         G_t2.nodes[u]["type"] = "GSP" if u in GSPs else "substation"
         G_t2.nodes[v]["type"] = "GSP" if v in GSPs else "substation"
+        G_t2.nodes[u]["voltage"] = G_t2.edges[u, v]["Voltage HV kV"]
+        G_t2.nodes[v]["voltage"] = G_t2.edges[u, v]["Voltage LV kV"]
         # Link flow capacity
         G_t2.edges[u, v]["flow_cap"] = G_t2.edges[u, v]["Transformer Rating Winter MVA"]  # or ["Transformer Rating Summer MVA"]
         # Calculate resistance
@@ -184,19 +190,20 @@ def create_power_ukpn_graph(gisnode, circuit, trans2w, trans3w, loads, geners, t
     G_t2.remove_edges_from(nx.selfloop_edges(G_t2))  # Remove self-loops
 
     # P.U.1.2.3 Create graph from edges dataframe - 3W transformers
+    # FYI if we want current capacity of transformers - take note: S[VA] = sqrt(3) * V[V] * I[A]
 
     # Perform clustering of nodes directly into substation names/locations
     trans3w = trans3w.groupby(["GSP", "HV Substation", "LV1 Substation", "LV2 Substation"]). \
         agg({
-        "HV Node": lambda x: ",".join(np.unique(x)),
+        "HV Node": lambda x: "-".join(np.unique(x)),
         "HV x": lambda x: np.nanmean(x),
         "HV y": lambda x: np.nanmean(x),
         "Voltage HV kV": lambda x: np.nanmean(x),
-        "LV Node 1": lambda x: ",".join(np.unique(x)),
+        "LV Node 1": lambda x: "-".join(np.unique(x)),
         "LV1 x": lambda x: np.nanmean(x),
         "LV1 y": lambda x: np.nanmean(x),
         "Voltage LV1 kV": lambda x: np.nanmean(x),
-        "LV Node 2": lambda x: ",".join(np.unique(x)),
+        "LV Node 2": lambda x: "-".join(np.unique(x)),
         "LV2 x": lambda x: np.nanmean(x),
         "LV2 y": lambda x: np.nanmean(x),
         "Voltage LV2 kV": lambda x: np.nanmean(x),
@@ -245,6 +252,8 @@ def create_power_ukpn_graph(gisnode, circuit, trans2w, trans3w, loads, geners, t
         G_t3.nodes[v]["pos"] = (G_t3.edges[u, v]["LV1 x"], G_t3.edges[u, v]["LV1 y"])
         G_t3.nodes[u]["type"] = "GSP" if u in GSPs else "substation"
         G_t3.nodes[v]["type"] = "GSP" if v in GSPs else "substation"
+        G_t3.nodes[u]["voltage"] = G_t3.edges[u, v]["Voltage HV kV"]
+        G_t3.nodes[v]["voltage"] = G_t3.edges[u, v]["Voltage LV1 kV"]
         # Link flow capacity
         G_t3.edges[u, v]["flow_cap"] = G_t3.edges[u, v]["Transformer Rating MVA Winter LV1"]  # or ["Transformer Rating MVA Summer LV1"]
         # Calculate resistance
@@ -277,6 +286,7 @@ def create_power_ukpn_graph(gisnode, circuit, trans2w, trans3w, loads, geners, t
         else:  # If LV sides of 3W transformer lead to different substations
             # Add new edge manually
             G_t3.add_edge(u, v)
+            G_t3.nodes[v]["voltage"] = G_t3_2.edges[u, v]["Voltage LV2 kV"]
             G_t3.edges[u, v]["GSP"] = G_t3_2.edges[u, v]["GSP"]
             G_t3.edges[u, v]["HV x"] = G_t3_2.edges[u, v]["HV x"]
             G_t3.edges[u, v]["HV y"] = G_t3_2.edges[u, v]["HV y"]
@@ -318,19 +328,21 @@ def create_power_ukpn_graph(gisnode, circuit, trans2w, trans3w, loads, geners, t
                 G.add_node(load_name,
                            pos=(row_s["x"], row_s["y"]),
                            type="load",
+                           voltage=G.nodes[row_s["Substation"]]["voltage"],
                            Maximum_Demand_1920_MW_summer=row_s["Maximum Demand 19/20 MW"],
                            Maximum_Demand_1920_PF_summer=row_s["Maximum Demand 19/20 PF"],
                            Firm_Capacity_MW_summer=row_s["Firm Capacity MW"],
                            Minimum_Load_Scaling_Factor_summer=row_s["Minimum Load Scaling Factor %"],
                            Maximum_Demand_1920_MW_winter=row_w["Maximum Demand 19/20 MW"],
                            Maximum_Demand_1920_PF_winter=row_w["Maximum Demand 19/20 PF"],
-                           Firm_Capacity_MW_winter=row_w["Firm Capacity MW"],
+                           Firm_Capacity_MW_winter=row_w["Firm Capacity MW"] / row_w["Maximum Demand 19/20 PF"],
                            Minimum_Load_Scaling_Factor_winter=row_w["Minimum Load Scaling Factor %"])
-                G.add_edge(n, load_name, flow_cap=row_w["Firm Capacity MW"],
+                G.add_edge(n, load_name, flow_cap=row_w["Firm Capacity MW"] / row_w["Maximum Demand 19/20 PF"],
                            resistance=0,
-                           conductance=200. * row_w["Firm Capacity MW"])
+                           conductance=200. * row_w["Firm Capacity MW"] / row_w["Maximum Demand 19/20 PF"])
 
     # P.U.1.2.5 Create graph from edges dataframe - generators
+    # TODO Capacity factors?
     geners = geners.loc[geners["Connected / Accepted"] == "Connected"]  # only consider connected generators
     geners = geners.loc[geners["Installed Capacity MW"] >= 1.]  # only consider generators above 1 MW
     for index, row in geners.iterrows():
@@ -341,7 +353,7 @@ def create_power_ukpn_graph(gisnode, circuit, trans2w, trans3w, loads, geners, t
                 G.add_node(gener_name,
                            pos=(row["x"], row["y"]),
                            type="generator",
-                           Connection_Voltage=row["Connection Voltage kV"],
+                           voltage=row["Connection Voltage kV"],
                            Installed_Capacity=row["Installed Capacity MW"])
                 G.add_edge(gener_name, n, flow_cap=row["Installed Capacity MW"],
                            resistance=0,
@@ -384,15 +396,19 @@ def create_power_ukpn_graph(gisnode, circuit, trans2w, trans3w, loads, geners, t
         # Node attributes
         G_txc.nodes[u]["pos"] = (G_txc.edges[u, v]["From x"], G_txc.edges[u, v]["From y"])
         G_txc.nodes[v]["pos"] = (G_txc.edges[u, v]["To x"], G_txc.edges[u, v]["To y"])
+        G_txc.nodes[u]["voltage"] = G_txc.edges[u, v]["Operating Voltage kV"]
+        G_txc.nodes[v]["voltage"] = G_txc.edges[u, v]["Operating Voltage kV"]
         un = gisnode.loc[gisnode["Location"] == u]
         ud = un["Dataset"].values[0]
-        G_txc.nodes[u]["type"] = "GSP" if u in GSPs \
+        G_txc.nodes[u]["type"] = "GSP_transmission" if u in TxGSPs \
+            else "GSP" if u in GSPs \
             else "substation_transmission" if ud == "National Grid" \
             else "substation_traction" if ud == "OSM" \
             else "substation"
         vn = gisnode.loc[gisnode["Location"] == v]
         vd = vn["Dataset"].values[0]
-        G_txc.nodes[v]["type"] = "GSP" if v in GSPs \
+        G_txc.nodes[v]["type"] = "GSP_transmission" if v in TxGSPs \
+            else "GSP" if v in GSPs \
             else "substation_transmission" if vd == "National Grid" \
             else "substation_traction" if vd == "OSM" \
             else "substation"
@@ -404,7 +420,7 @@ def create_power_ukpn_graph(gisnode, circuit, trans2w, trans3w, loads, geners, t
 
     G_txc.remove_edges_from(nx.selfloop_edges(G_txc))  # Remove self-loops
 
-    # P.U.1.2.7 Add transmission and traction transformers
+    # P.U.1.2.8 Add transmission and traction transformers
     G_txt = nx.from_pandas_edgelist(txtran, source="HV Substation", target="LV Substation",
                                    edge_attr=["HV x", "HV y",
                                               "LV x", "LV y",
@@ -417,15 +433,19 @@ def create_power_ukpn_graph(gisnode, circuit, trans2w, trans3w, loads, geners, t
         # Node attributes
         G_txt.nodes[u]["pos"] = (G_txt.edges[u, v]["HV x"], G_txt.edges[u, v]["HV y"])
         G_txt.nodes[v]["pos"] = (G_txt.edges[u, v]["LV x"], G_txt.edges[u, v]["LV y"])
+        G_txt.nodes[u]["voltage"] = G_txt.edges[u, v]["Voltage HV kV"]
+        G_txt.nodes[v]["voltage"] = G_txt.edges[u, v]["Voltage LV kV"]
         un = gisnode.loc[gisnode["Location"] == u]
         ud = un["Dataset"].values[0]
-        G_txt.nodes[u]["type"] = "GSP" if u in GSPs \
+        G_txt.nodes[u]["type"] = "GSP_transmission" if u in TxGSPs \
+            else "GSP" if u in GSPs \
             else "substation_transmission" if ud == "National Grid" \
             else "substation_traction" if ud == "OSM" \
             else "substation"
         vn = gisnode.loc[gisnode["Location"] == v]
         vd = vn["Dataset"].values[0]
-        G_txt.nodes[v]["type"] = "GSP" if v in GSPs \
+        G_txt.nodes[v]["type"] = "GSP_transmission" if v in TxGSPs \
+            else "GSP" if v in GSPs \
             else "substation_transmission" if vd == "National Grid" \
             else "substation_traction" if vd == "OSM" \
             else "substation"
@@ -446,6 +466,27 @@ def create_power_ukpn_graph(gisnode, circuit, trans2w, trans3w, loads, geners, t
         G.nodes[n]["thruflow_cap"] = max(sum([G.edges[p, n]["flow_cap"] for p in predecessors]),
                                          sum([G.edges[n, s]["flow_cap"] for s in successors]))
 
+    # P.U.1.2.10 Clean attribute data
+    for n in G.nodes():
+        G.nodes[n]["nodeLabel"] = n
+    for u, v in G.edges():
+        G.edges[u, v].pop("From x", None)
+        G.edges[u, v].pop("From y", None)
+        G.edges[u, v].pop("To y", None)
+        G.edges[u, v].pop("To y", None)
+        G.edges[u, v].pop("HV x", None)
+        G.edges[u, v].pop("HV y", None)
+        G.edges[u, v].pop("LV1 x", None)
+        G.edges[u, v].pop("LV1 y", None)
+        G.edges[u, v].pop("LV2 x", None)
+        G.edges[u, v].pop("LV2 y", None)
+        edge_keys = list(G.edges[u, v].keys())
+        for attr in edge_keys:
+            if "Sequence Impedance" in attr:
+                G.edges[u, v].pop(attr, None)
+
+    # G = nx.convert_node_labels_to_integers(G)
+
     return G
 
 
@@ -465,12 +506,13 @@ def flowcalc_power_ukpn_graph(G):
         for n in subG.nodes():
             subG.nodes[n]["flow_out"] = 0.
             subG.nodes[n]["flow_in"] = cp.Variable(nonneg=True, name="flow_in_{" + str(n) + "}") \
-                if subG.nodes[n]["type"] == "substation_transmission" else 0.  # "GSP" else 0. # if only distribution network evaluated
+                if subG.nodes[n]["type"] == "GSP_transmission" else 0.  # "GSP" else 0. # if only distribution network evaluated
             # Soft constraint - let's see if we can trip the generators where there is excessive demand
             subG.nodes[n]["flow_gen"] = cp.Variable(nonneg=True, name="flow_gen_{" + str(n) + "}") \
                 if subG.nodes[n]["type"] == "generator" else 0.
             # Hard constraint - we don't need more electricity supplied than the demand!
-            subG.nodes[n]["flow_con"] = subG.nodes[n]["Maximum_Demand_1920_MW_winter"] \
+            subG.nodes[n]["flow_con"] = (subG.nodes[n]["Maximum_Demand_1920_MW_winter"] \
+                                         * (1. + subG.nodes[n]["Minimum_Load_Scaling_Factor_winter"] / 2)) \
                 if subG.nodes[n]["type"] == "load" else 0.
 
         # P.U.2.2 Add constraints
