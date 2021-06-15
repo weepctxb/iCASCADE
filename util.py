@@ -7,6 +7,12 @@ import matplotlib.pyplot as plt
 from globalparams import POWER_LINE_PP_EPS
 
 
+def hex_to_rgb(value):
+    value = value.lstrip('#')
+    lv = len(value)
+    return list(int(value[i:i + lv // 3], 16) for i in range(0, lv, lv // 3)) + [255]
+
+
 def haversine(lon1, lat1, lon2, lat2):
     """Calculates distance between two sets of coordinates"""
     # https://gist.github.com/Tofull/49fbb9f3661e376d2fe08c2e9d64320e
@@ -267,6 +273,11 @@ def transport_to_undirected(G):
 def transport_compare_flow_dur_distribution():
     """Check fit with power law, and fit between estimated & actual flows & travel durations"""
 
+    # FYI Distribution of trip durations won't match exactly because we are comparing (only) the
+    #  train travel timings with stopping (w/o transfer or waiting times) vs. actual measured durations
+    #  But this is not a major cause of concern because we only use the trip durations as a weight measure
+    #  for shortest path calculations.
+
     import json
     import pandas as pd
     import matplotlib.pyplot as plt
@@ -307,11 +318,6 @@ def transport_compare_flow_dur_distribution():
     plt.ylabel('No. of trips (unique)')
     plt.show()
 
-    # FYI Distribution of trip durations won't match exactly because we are comparing (only) the
-    #  train travel timings with stopping (w/o transfer or waiting times) vs. actual measured durations
-    #  But this is not a major cause of concern because we only use the trip durations as a weight measure
-    #  for shortest path calculations.
-
 
 def power_calc_centrality(G):
     """Calculate and assign centralities by conductance"""
@@ -319,12 +325,23 @@ def power_calc_centrality(G):
     eb = dict()
     ecfb = dict()
 
+    source_nodes = [n for n in G.nodes() if
+                    (G.nodes[n]["type"] == "generator" or G.nodes[n]["type"] == "GSP_transmission")]
+    target_nodes = [n for n in G.nodes() if
+                    G.nodes[n]["type"] == "load"]
+
     for subG in weakly_connected_component_subgraphs(G, copy=True):
-        cfb.update(nx.current_flow_betweenness_centrality(subG.to_undirected(), normalized=False, weight="conductance"))
+        cfb.update(custom_cfb(
+            subG.to_undirected(), normalized=False, weight="conductance",
+            sources=source_nodes, targets=target_nodes))
+        # cfb.update(nx.current_flow_betweenness_centrality(subG.to_undirected(), normalized=False, weight="conductance"))
 
         eb.update(nx.edge_betweenness_centrality(G, normalized=True, weight="resistance"))
-        ecfb.update(nx.edge_current_flow_betweenness_centrality(subG.to_undirected(), normalized=False,
-                                                                weight="conductance"))
+        ecfb.update(custom_ecfb(
+            subG.to_undirected(), normalized=False, weight="conductance",
+            sources=source_nodes, targets=target_nodes))
+        # ecfb.update(nx.edge_current_flow_betweenness_centrality(subG.to_undirected(), normalized=False,
+        #                                                         weight="conductance"))
 
     nx.set_node_attributes(G, cfb, 'current_flow_betweenness')
 
@@ -336,6 +353,70 @@ def power_calc_centrality(G):
             G.edges[u, v]["edge_current_flow_betweenness"] = ecfb[(v, u)]  # PATCH
 
     return G
+
+
+def custom_ecfb(G, sources, targets, normalized=True, weight=None, dtype=float, solver="lu"):
+    """Custom implementation of nx.edge_current_flow_betweenness_centrality_subset"""
+
+    from networkx.utils import reverse_cuthill_mckee_ordering
+    from networkx.algorithms.centrality.flow_matrix import flow_matrix_row
+
+    if not nx.is_connected(G):
+        raise nx.NetworkXError("Graph not connected.")
+    n = G.number_of_nodes()
+    ordering = list(reverse_cuthill_mckee_ordering(G))
+    # make a copy with integer labels according to rcm ordering
+    # this could be done without a copy if we really wanted to
+    mapping = dict(zip(ordering, range(n)))
+    H = nx.relabel_nodes(G, mapping)
+    edges = (tuple(sorted((u, v))) for u, v in H.edges())
+    betweenness = dict.fromkeys(edges, 0.0)
+    if normalized:
+        nb = (n - 1.0) * (n - 2.0)  # normalization factor
+    else:
+        nb = 2.0
+    for row, (e) in flow_matrix_row(H, weight=weight, dtype=dtype, solver=solver):
+        for ss in sources:
+            i = mapping[ss]
+            for tt in targets:
+                j = mapping[tt]
+                betweenness[e] += 0.5 * np.abs(row[i] - row[j]) * \
+                                  sqrt(G.nodes[ss]["thruflow_cap"] * G.nodes[tt]["thruflow_cap"])
+        betweenness[e] /= nb
+    return {(ordering[s], ordering[t]): v for (s, t), v in betweenness.items()}
+
+
+def custom_cfb(G, sources, targets, normalized=True, weight=None, dtype=float, solver="lu"):
+    """Custom implementation of nx.current_flow_betweenness_centrality_subset"""
+
+    from networkx.utils import reverse_cuthill_mckee_ordering
+    from networkx.algorithms.centrality.flow_matrix import flow_matrix_row
+
+    if not nx.is_connected(G):
+        raise nx.NetworkXError("Graph not connected.")
+    n = G.number_of_nodes()
+    ordering = list(reverse_cuthill_mckee_ordering(G))
+    # make a copy with integer labels according to rcm ordering
+    # this could be done without a copy if we really wanted to
+    mapping = dict(zip(ordering, range(n)))
+    H = nx.relabel_nodes(G, mapping)
+    betweenness = dict.fromkeys(H, 0.0)  # b[v]=0 for v in H
+    for row, (s, t) in flow_matrix_row(H, weight=weight, dtype=dtype, solver=solver):
+        for ss in sources:
+            i = mapping[ss]
+            for tt in targets:
+                j = mapping[tt]
+                betweenness[s] += 0.5 * np.abs(row[i] - row[j])  * \
+                                  sqrt(G.nodes[ss]["thruflow_cap"] * G.nodes[tt]["thruflow_cap"])
+                betweenness[t] += 0.5 * np.abs(row[i] - row[j]) * \
+                                  sqrt(G.nodes[ss]["thruflow_cap"] * G.nodes[tt]["thruflow_cap"])
+    if normalized:
+        nb = (n - 1.0) * (n - 2.0)  # normalization factor
+    else:
+        nb = 2.0
+    for v in H:
+        betweenness[v] = betweenness[v] / nb + 1.0 / (2 - n)
+    return {ordering[k]: v for k, v in betweenness.items()}
 
 
 def power_to_undirected(G):
@@ -364,9 +445,6 @@ def power_to_undirected(G):
 
     for u, v in G.edges():
         G_undir.edges[u, v]["pct_flow_cap"] = G_undir.edges[u, v]["flow"] / G_undir.edges[u, v]["flow_cap"]
-
-    # FIXME We may not actually need to do this here, but later on at each iteration of the simulation
-    G_undir = power_calc_centrality(G_undir)
 
     return G_undir
 
