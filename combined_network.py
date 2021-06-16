@@ -22,8 +22,7 @@ for n in G_transport.nodes():
 for u, v in G_transport.edges():
     G_transport.edges[u, v]["network"] = "transport"
 for n in G_power.nodes():
-    G_power.nodes[n]["pos"] = (G_power.nodes[n]["pos"][0], G_power.nodes[n]["pos"][1],
-                               0.5
+    G_power.nodes[n]["pos"] = (G_power.nodes[n]["pos"][0], G_power.nodes[n]["pos"][1], 0.25
                                # if G_power.nodes[n]["type"] in ["GSP_transmission", "substation_transmission"]
                                # else 0.9 if G_power.nodes[n]["type"] == "generator"
                                # else 0.7 if G_power.nodes[n]["type"] == "load"

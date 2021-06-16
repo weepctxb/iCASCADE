@@ -108,8 +108,7 @@ def create_power_ukpn_graph(gisnode, circuit, trans2w, trans3w, loads, geners, t
 
     # Get list of distribution network-level GSPs and transmission network-level GSPs
     GSPs = np.unique(circuit["GSP"].tolist())
-    TxGSPs = ["Iver 400kV", "Elstree 400kV", "Waltham Cross 400kV", "Tilbury 400kV",
-              "Northfleet East 400kV", "West Weybridge 400kV"]
+    TxGSPs = ["Iver 275kV", "Elstree 400kV", "Waltham Cross 275kV", "Northfleet East 400kV"]
 
     # Build graph
     G_c = nx.from_pandas_edgelist(circuit, source="From Substation", target="To Substation",
@@ -613,20 +612,35 @@ def flowcalc_power_ukpn_graph(G):
 
 # P.U.3.1 Flow check
 def flow_check(G):
-    for u, v in G.edges():
-        if G.edges[u, v]["flow"] == 0:
-            print("Link Warning - Zero Flow: ", u, v, G.edges[u, v]["flow"], G.edges[u, v]["flow_cap"])
-        elif G.edges[u, v]["flow_cap"] == 0:
-            print("Link Warning - Zero Capacity: ", u, v, G.edges[u, v]["flow"], G.edges[u, v]["flow_cap"])
-        elif G.edges[u, v]["flow"] > G.edges[u, v]["flow_cap"]:
-            print("Link Warning - Capacity Exceeded: ", u, v, G.edges[u, v]["flow"], G.edges[u, v]["flow_cap"])
+    total_inflow = 0.
+    total_supply = 0.
+    total_demand = 0.
     for n in G.nodes():
-        if G.nodes[n]["thruflow"] == 0:
-            print("Node Warning - Zero Thruflow: ", n, G.nodes[n]["thruflow"], G.nodes[n]["thruflow_cap"])
-        elif G.nodes[n]["thruflow_cap"] == 0:
-            print("Node Warning - Zero Capacity: ", n, G.nodes[n]["thruflow"], G.nodes[n]["thruflow_cap"])
-        elif G.nodes[n]["thruflow"] > G.nodes[n]["thruflow_cap"]:
-            print("Node Warning - Capacity Exceeded: ", n, G.nodes[n]["thruflow"], G.nodes[n]["thruflow_cap"])
+        if G.nodes[n]["type"] in ["GSP_transmission"]:
+            print(n, G.nodes[n]["type"], G.in_degree(n), G.out_degree(n), G.nodes[n]["thruflow_cap"])
+            total_inflow += G.nodes[n]["thruflow_cap"]
+        elif G.nodes[n]["type"] in ["generator"]:
+            print(n, G.nodes[n]["type"], G.in_degree(n), G.out_degree(n), G.nodes[n]["thruflow_cap"])
+            total_supply += G.nodes[n]["thruflow_cap"]
+        elif G.nodes[n]["type"] in ["load"]:
+            print(n, G.nodes[n]["type"], G.in_degree(n), G.out_degree(n), G.nodes[n]["thruflow_cap"])
+            total_demand += G.nodes[n]["thruflow_cap"]
+    print(total_inflow, total_supply, total_demand)
+
+    # for u, v in G.edges():
+    #     if G.edges[u, v]["flow"] == 0:
+    #         print("Link Warning - Zero Flow: ", u, v, G.edges[u, v]["flow"], G.edges[u, v]["flow_cap"])
+    #     elif G.edges[u, v]["flow_cap"] == 0:
+    #         print("Link Warning - Zero Capacity: ", u, v, G.edges[u, v]["flow"], G.edges[u, v]["flow_cap"])
+    #     elif G.edges[u, v]["flow"] > G.edges[u, v]["flow_cap"]:
+    #         print("Link Warning - Capacity Exceeded: ", u, v, G.edges[u, v]["flow"], G.edges[u, v]["flow_cap"])
+    # for n in G.nodes():
+    #     if G.nodes[n]["thruflow"] == 0:
+    #         print("Node Warning - Zero Thruflow: ", n, G.nodes[n]["thruflow"], G.nodes[n]["thruflow_cap"])
+    #     elif G.nodes[n]["thruflow_cap"] == 0:
+    #         print("Node Warning - Zero Capacity: ", n, G.nodes[n]["thruflow"], G.nodes[n]["thruflow_cap"])
+    #     elif G.nodes[n]["thruflow"] > G.nodes[n]["thruflow_cap"]:
+    #         print("Node Warning - Capacity Exceeded: ", n, G.nodes[n]["thruflow"], G.nodes[n]["thruflow_cap"])
 
 
 if __name__ == "__main__":
@@ -654,7 +668,7 @@ if __name__ == "__main__":
             print(e)
 
     # P.U.3 Check flows
-    flow_check(G_flow)
+    # flow_check(G_flow)
 
     # P.U.4 Export graph nodelist
     try:
