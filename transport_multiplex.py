@@ -7,7 +7,7 @@ import json
 import numpy as np
 
 from globalparams import TRANSPORT_COLORS, TRAIN_DUR_THRESHOLD_MIN
-from util import linear_cluster, transport_calc_centrality
+from util import linear_cluster, transport_calc_centrality, transport_to_undirected
 
 
 # T.M.1.1 Load nodes and edges data
@@ -58,10 +58,12 @@ def create_transport_multiplex_graph(nodes, edges, odmat, capac):
     for index, row in edges.iterrows():
         G.add_edge(row["StationA_ID"], row["StationB_ID"],
                    Line=row["Line"], StationA=row["StationA"], StationB=row["StationB"],
-                   Distance=row["Distance"], running_time_min=row["running_time_min"])
+                   Distance=row["Distance"], running_time_min=row["running_time_min"],
+                   recip_running_time_min=1. / max(1., row["running_time_min"]))
         G.add_edge(row["StationB_ID"], row["StationA_ID"],
                    Line=row["Line"], StationA=row["StationB"], StationB=row["StationA"],
-                   Distance=row["Distance"], running_time_min=row["running_time_min"])
+                   Distance=row["Distance"], running_time_min=row["running_time_min"],
+                   recip_running_time_min=1. / max(1., row["running_time_min"]))
     # FYI Catch & remove the one-way train links: Hatton Cross -> Heathrow Terminal 4 is one-way
     G.remove_edge(235, 234)
     # FYI other removed segments (removed directly from dataset):
@@ -91,9 +93,9 @@ def create_transport_multiplex_graph(nodes, edges, odmat, capac):
     for n in G.nodes():
         nnlc = G.nodes[n]["NLC"]
         odmat_filtered_in = odmat.loc[odmat["mnlc_o"] == nnlc]
-        G.nodes[n]["flow_in"] = round(sum(odmat_filtered_in["od_tb_3_perhour"]))
+        G.nodes[n]["flow_in"] = sum(odmat_filtered_in["od_tb_3_perhour"])
         odmat_filtered_out = odmat.loc[odmat["mnlc_d"] == nnlc]
-        G.nodes[n]["flow_out"] = round(sum(odmat_filtered_out["od_tb_3_perhour"]))
+        G.nodes[n]["flow_out"] = sum(odmat_filtered_out["od_tb_3_perhour"])
 
     # T.M.1.2.5 Assign link flow capacities
     for u, v in G.edges():
@@ -104,31 +106,25 @@ def create_transport_multiplex_graph(nodes, edges, odmat, capac):
         capac_filtered = capac_filtered_1.loc[capac_filtered_1["StationB_NLC"] == vnlc]
         flow_cap_uv = np.dot(capac_filtered["train_capacity"],
                              capac_filtered["train_freq_tb_3_perhour"])
-        G.edges[u, v]["flow_cap"] = round(flow_cap_uv)
+        G.edges[u, v]["flow_cap"] = flow_cap_uv
 
     # T.M.1.2.6 Assign node thruflow capacities
     for n in G.nodes():
-        # Initialise capacities
-        G.nodes[n]["thruflow_cap"] = G.nodes[n]["flow_in"] + G.nodes[n]["flow_out"]
-        # Calculate capacities as sum of flow capacities of outgoing links
-        for nsucc in G.successors(n):
-            G.nodes[n]["thruflow_cap"] += G.edges[n, nsucc]["flow_cap"]
-        for npred in G.predecessors(n):
-            G.nodes[n]["thruflow_cap"] += G.edges[npred, n]["flow_cap"]
-        G.nodes[n]["thruflow_cap"] = round(G.nodes[n]["thruflow_cap"] / 2)  # to avoid double-counting
+        # Calculate capacities as sum of max(flow_in + incoming flows, flow_out + outgoing flows)
+        predecessors = list(G.predecessors(n))
+        successors = list(G.successors(n))
+        G.nodes[n]["thruflow_cap"] = max(G.nodes[n]["flow_in"] + sum([G.edges[p, n]["flow_cap"] for p in predecessors]),
+                                     G.nodes[n]["flow_out"] + sum([G.edges[n, s]["flow_cap"] for s in successors]))
 
     # T.M.1.2.7 Clean attribute data
     for n in G.nodes():
         G.nodes[n]["type"] = "interchange" if G.nodes[n]["interchange"] else "station"
-    for u, v in G.edges():
-        G.edges[u, v].pop("StationA", None)
-        G.edges[u, v].pop("StationB", None)
 
     return G
 
 
 # T.M.2.1 Calculate flows for networkx graph
-def flowcalc_transport_multiplex_graph(G, odmat):
+def flow_cen_calc_transport_multiplex_graph(G, odmat):
 
     # T.M.2.1.1 Calculate shortest paths
     try:
@@ -176,46 +172,34 @@ def flowcalc_transport_multiplex_graph(G, odmat):
 
     # T.M.2.1.2 Assign baseline link flows
     for u, v in G.edges():
-        G.edges[u, v]["flow"] = 0
+        G.edges[u, v]["sp_flow"] = 0
     for s in shortest_paths:
         for t in shortest_paths[s]:
             if shortest_paths[s][t]["path"] is not None:  # if shortest path exists
                 for u, v in zip(shortest_paths[s][t]["path"][:-1], shortest_paths[s][t]["path"][1:]):
-                    G.edges[u, v]["flow"] += round(shortest_paths[s][t]["flow"])
+                    G.edges[u, v]["sp_flow"] += shortest_paths[s][t]["flow"]
 
-    # T.M.2.1.3 Assign baseline node thruflows
-    for n in G.nodes():
-        # Initialise through flows
-        G.nodes[n]["thruflow"] = 0
-        # Calculate through flows
-        for ne in G.neighbors(n):  # this considers only successors for digraph
-            G.nodes[n]["thruflow"] += G.edges[n, ne]["flow"]
+    # T.M.2.1.3 Calculate centralities
+    G = transport_calc_centrality(G)
 
-    # T.M.2.1.4 Assign baseline link flow % capacity utilised
+    # T.M.2.1.4 Combine into hybrid measure for link flow,
+    #  and Assign baseline % capacity utilised
     for u, v in G.edges():
+        G.edges[u, v]["flow"] = (float(G.edges[u, v]["sp_flow"]) ** 0.64) * \
+                                (float(G.edges[u, v]["edge_current_flow_betweenness"]) ** 0.39)
         G.edges[u, v]["pct_flow_cap"] = G.edges[u, v]["flow"] / G.edges[u, v]["flow_cap"]
 
-    # T.M.2.1.5 Assign baseline node thruflow % capacity utilised
+    # T.M.2.1.3 Assign baseline node thruflows,
+    #  and Assign baseline % capacity utilised
     for n in G.nodes():
+        # Calculate capacities as sum of max(flow_in + incoming flows, flow_out + outgoing flows)
+        predecessors = list(G.predecessors(n))
+        successors = list(G.successors(n))
+        G.nodes[n]["thruflow"] = max(G.nodes[n]["flow_in"] + sum([G.edges[p, n]["flow"] for p in predecessors]),
+                                         G.nodes[n]["flow_out"] + sum([G.edges[n, s]["flow"] for s in successors]))
         G.nodes[n]["pct_thruflow_cap"] = G.nodes[n]["thruflow"] / G.nodes[n]["thruflow_cap"]
 
     return G
-
-
-# T.M.2.2 Alternative method to calculate flows for networkx graph, using capacity scaling
-# def flowcalc_transport_multiplex_graph_capscal(G):
-#     total_supply = sum([G.nodes[n]["flow_in"] for n in G.nodes()])
-#     total_demand = sum([G.nodes[n]["flow_out"] for n in G.nodes()])
-#     for n in G.nodes():
-#         G.nodes[n]["demand"] = round(G.nodes[n]["flow_out"] - G.nodes[n]["flow_in"] * total_demand / total_supply)
-#     G.nodes[n]["demand"] -= sum(G.nodes[u].get("demand", 0) for u in G)  # PATCH FIXME
-#     for u, v in G.edges():
-#         G.edges[u, v]["capacity"] = round(G.edges[u, v]["flow_cap"])
-#         G.edges[u, v]["weight"] = round(G.edges[u, v]["running_time_min"] * 60)  # convert to int seconds (must be int)
-#     flowCost, flowDict = nx.capacity_scaling(G, demand='demand', capacity='capacity', weight='weight')
-#     for u, v in G.edges():
-#         G.edges[u, v]["flow_capscal"] = flowDict[u][v]
-#     return G
 
 
 # T.M.3 Simplify network
@@ -254,13 +238,6 @@ def flow_check(G):
             print("Node Warning: ", n, G.nodes[n]["thruflow"], G.nodes[n]["thruflow_cap"])
 
 
-# T.M.x Graph stats summary
-def stats_summary(G):
-    print("Stats summary:")
-    print("sigma:", nx.sigma(G, niter=1, nrand=5), "(small world if >1)")
-    print("omega:", nx.omega(G, niter=1, nrand=5), "(lattice if ~-1, small world if ~0, random if ~1)")
-
-
 # def plot_degree_histogram(G, edges):
 #
 #     degree_freq = nx.degree_histogram(G)
@@ -283,6 +260,8 @@ def stats_summary(G):
 
 if __name__ == "__main__":
 
+    odmat = None
+
     # T.M.1 Load networkx graph
     try:
         G = pickle.load(open(r'data/transport_multiplex/out/transport_multiplex_G.pkl', "rb"))
@@ -298,9 +277,9 @@ if __name__ == "__main__":
     try:
         G_flow = pickle.load(open(r'data/transport_multiplex/out/transport_multiplex_G_flow.pkl', "rb"))
     except IOError:
-        odmat = pd.read_pickle("data/transport_multiplex/in/transport_multiplex_odmat.pkl")
-        G_flow = flowcalc_transport_multiplex_graph(G, odmat)
-        # G_flow = flowcalc_transport_multiplex_graph_capscal(G_flow)  # DEBUG alternative flow calc
+        if odmat is None:
+            odmat = pd.read_pickle("data/transport_multiplex/in/transport_multiplex_odmat.pkl")
+        G_flow = flow_cen_calc_transport_multiplex_graph(G, odmat)
         try:
             pickle.dump(G_flow, open(r'data/transport_multiplex/out/transport_multiplex_G_flow.pkl', 'wb+'))
         except FileNotFoundError as e:
@@ -312,28 +291,12 @@ if __name__ == "__main__":
     except (IOError, FileNotFoundError, json.decoder.JSONDecodeError):
         G_skele = simplify_transport_multiplex_graph(G_flow)
         G_skele = simplify_transport_multiplex_graph(G_skele)  # Run it again!
+        G_skele = transport_calc_centrality(G_skele)
         # Beyond this the graph can no longer be further simplified using the current rules
         try:
             pickle.dump(G_skele, open(r'data/transport_multiplex/out/transport_multiplex_G_flow_skele.pkl', 'wb+'))
         except FileNotFoundError as e:
             print(e)
-
-    # T.M.4 Check flows and calculate centrality
-    # flow_check(G_skele)
-    G_skele = transport_calc_centrality(G_skele)
-    try:
-        pickle.dump(G_skele, open(r'data/transport_multiplex/out/transport_multiplex_G_flow_skele.pkl', 'wb+'))
-    except FileNotFoundError as e:
-        print(e)
-    # flow_check(G_flow)
-    G_flow = transport_calc_centrality(G_flow)
-    try:
-        pickle.dump(G_flow, open(r'data/transport_multiplex/out/transport_multiplex_G_flow.pkl', 'wb+'))
-    except FileNotFoundError as e:
-        print(e)
-    # Graph stats summary
-    # stats_summary(G)
-    # stats_summary(G_flow)
 
     # T.M.5 Export graph nodelist
     try:
@@ -363,13 +326,11 @@ if __name__ == "__main__":
 
     # T.M.7 Export graph edgelist
     try:
-        # edgelist = pd.DataFrame(columns=["StationA_ID", "StationA", "StationA_NLC",
-        #                                  "StationB_ID", "StationB", "StationB_NLC",
-        #                                  "flow",
-        #                                  # "flow_capscal",
-        #                                  "flow_cap", "pct_flow_cap",
-        #                                  "actual_flow", "rel_error",
-        #                                  "edge_betweenness", "edge_current_flow_betweenness"])
+        edgelist = pd.DataFrame(columns=["StationA_ID", "StationA", "StationA_NLC",
+                                         "StationB_ID", "StationB", "StationB_NLC",
+                                         "flow", "flow_cap", "pct_flow_cap",
+                                         "actual_flow", "rel_error",
+                                         "edge_betweenness", "edge_current_flow_betweenness"])
 
         link_loads = pd.read_excel("data/transport_multiplex/raw/transport_multiplex.xlsx",
                                           sheet_name="link_loads", header=0)
@@ -385,31 +346,30 @@ if __name__ == "__main__":
                 v_list = [int(x) for x in v.split("-")]
                 actual_flow = link_loads.loc[link_loads["To ID"] == v_list[0]]
             actual_flow = np.nansum(actual_flow["AM Peak per hour"])
+            G_skele.edges[u, v]["actual_flow"] = actual_flow
             rel_error = abs(G_skele.edges[u, v]["flow"] - actual_flow) / max(1.e-5, actual_flow)
             G_skele.edges[u, v]["rel_error"] = rel_error
 
-        #     series_obj = pd.Series([u, G_skele.nodes[u]["nodeLabel"], G_skele.nodes[u]["NLC"],
-        #                             v, G_skele.nodes[v]["nodeLabel"], G_skele.nodes[v]["NLC"],
-        #                             G_skele.edges[u, v]["flow"],
-        #                             # G_skele.edges[u, v]["flow_capscal"],
-        #                             G_skele.edges[u, v]["flow_cap"], G_skele.edges[u, v]["pct_flow_cap"],
-        #                             actual_flow, rel_error,
-        #                             G_skele.edges[u, v]["edge_betweenness"],
-        #                             G_skele.edges[u, v]["edge_current_flow_betweenness"]],
-        #                            index=edgelist.columns)
-        #     edgelist = edgelist.append(series_obj, ignore_index=True)
-        # edgelist.to_excel(r'data/transport_multiplex/out/transport_multiplex_edgelist.xlsx', index=True)
+            series_obj = pd.Series([u, G_skele.nodes[u]["nodeLabel"], G_skele.nodes[u]["NLC"],
+                                    v, G_skele.nodes[v]["nodeLabel"], G_skele.nodes[v]["NLC"],
+                                    G_skele.edges[u, v].get("flow", "No Data"),
+                                    G_skele.edges[u, v].get("flow_cap", "No Data"),
+                                    G_skele.edges[u, v].get("pct_flow_cap", "No Data"),
+                                    actual_flow, rel_error,
+                                    G_skele.edges[u, v].get("edge_betweenness", "No Data"),
+                                    G_skele.edges[u, v].get("edge_current_flow_betweenness", "No Data")],
+                                   index=edgelist.columns)
+            edgelist = edgelist.append(series_obj, ignore_index=True)
+        edgelist.to_excel(r'data/transport_multiplex/out/transport_multiplex_edgelist.xlsx', index=True)
     except Exception as e:
         raise e
 
     try:
-        # edgelist = pd.DataFrame(columns=["StationA_ID", "StationA", "StationA_NLC",
-        #                                  "StationB_ID", "StationB", "StationB_NLC",
-        #                                  "flow",
-        #                                  # "flow_capscal",
-        #                                  "flow_cap", "pct_flow_cap",
-        #                                  "actual_flow", "rel_error",
-        #                                  "edge_betweenness", "edge_current_flow_betweenness"])
+        edgelist = pd.DataFrame(columns=["StationA_ID", "StationA", "StationA_NLC",
+                                         "StationB_ID", "StationB", "StationB_NLC",
+                                         "flow", "flow_cap", "pct_flow_cap",
+                                         "actual_flow", "rel_error",
+                                         "edge_betweenness", "edge_current_flow_betweenness"])
 
         link_loads = pd.read_excel("data/transport_multiplex/raw/transport_multiplex.xlsx",
                                           sheet_name="link_loads", header=0)
@@ -425,25 +385,26 @@ if __name__ == "__main__":
                 v_list = [int(x) for x in v.split("-")]
                 actual_flow = link_loads.loc[link_loads["To ID"] == v_list[0]]
             actual_flow = np.nansum(actual_flow["AM Peak per hour"])
+            G_flow.edges[u, v]["actual_flow"] = actual_flow
             rel_error = abs(G_flow.edges[u, v]["flow"] - actual_flow) / max(1.e-5, actual_flow)
             G_flow.edges[u, v]["rel_error"] = rel_error
 
-        #     series_obj = pd.Series([u, G_flow.nodes[u]["nodeLabel"], G_flow.nodes[u]["NLC"],
-        #                             v, G_flow.nodes[v]["nodeLabel"], G_flow.nodes[v]["NLC"],
-        #                             G_flow.edges[u, v]["flow"],
-        #                             # G_flow.edges[u, v]["flow_capscal"],
-        #                             G_flow.edges[u, v]["flow_cap"], G_flow.edges[u, v]["pct_flow_cap"],
-        #                             actual_flow, rel_error,
-        #                             G_flow.edges[u, v]["edge_betweenness"],
-        #                             G_flow.edges[u, v]["edge_current_flow_betweenness"]],
-        #                            index=edgelist.columns)
-        #     edgelist = edgelist.append(series_obj, ignore_index=True)
-        # edgelist.to_excel(r'data/transport_multiplex/out/transport_multiplex_edgelist_unsimpl.xlsx', index=True)
+            series_obj = pd.Series([u, G_flow.nodes[u]["nodeLabel"], G_flow.nodes[u]["NLC"],
+                                    v, G_flow.nodes[v]["nodeLabel"], G_flow.nodes[v]["NLC"],
+                                    G_flow.edges[u, v].get("flow", "No Data"),
+                                    G_flow.edges[u, v].get("flow_cap", "No Data"),
+                                    G_flow.edges[u, v].get("pct_flow_cap", "No Data"),
+                                    actual_flow, rel_error,
+                                    G_flow.edges[u, v].get("edge_betweenness", "No Data"),
+                                    G_flow.edges[u, v].get("edge_current_flow_betweenness", "No Data")],
+                                   index=edgelist.columns)
+            edgelist = edgelist.append(series_obj, ignore_index=True)
+        edgelist.to_excel(r'data/transport_multiplex/out/transport_multiplex_edgelist_unsimpl.xlsx', index=True)
     except Exception as e:
         raise e
 
     # T.M.8 Add colours and export map plot
-    G_skele_undir = G_skele.to_undirected()
+    G_skele_undir = transport_to_undirected(G_skele)
 
     node_colors = [TRANSPORT_COLORS.get(G_skele_undir.nodes[node]["line"], "#FF0000") for node in G_skele_undir.nodes()]
     edge_lines = nx.get_edge_attributes(G_skele_undir, "Line")
@@ -457,7 +418,7 @@ if __name__ == "__main__":
     plt.savefig("data/transport_multiplex/img/transport_multiplex.svg")
     plt.show()
 
-    G_flow_undir = G_flow.to_undirected()
+    G_flow_undir = transport_to_undirected(G_flow)
 
     node_colors = [TRANSPORT_COLORS.get(G_flow_undir.nodes[node]["line"], "#FF0000") for node in G_flow_undir.nodes()]
     edge_lines = nx.get_edge_attributes(G_flow_undir, "Line")

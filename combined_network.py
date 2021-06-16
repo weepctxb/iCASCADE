@@ -14,7 +14,8 @@ G_transport = pickle.load(open(r'data/transport_multiplex/out/transport_multiple
 G_power = pickle.load(open(r'data/power_ukpn/out/power_ukpn_G_flow.pkl', "rb"))
 
 # Extend coordinate systems of individual networks into 3D
-# Tag nodes/edges as belonging to specific network
+# Tag nodes/links as belonging to specific network
+# Tag state of nodes/links (working = 1, failed = 0)
 for n in G_transport.nodes():
     G_transport.nodes[n]["pos"] = (G_transport.nodes[n]["pos"][0], G_transport.nodes[n]["pos"][1], 0)
     # 0 if G_transport.nodes[n]["line"].startswith(("lo-", "tfl-rail-")) else 0.1
@@ -22,15 +23,17 @@ for n in G_transport.nodes():
 for u, v in G_transport.edges():
     G_transport.edges[u, v]["network"] = "transport"
 for n in G_power.nodes():
-    G_power.nodes[n]["pos"] = (G_power.nodes[n]["pos"][0], G_power.nodes[n]["pos"][1], 0.25
+    G_power.nodes[n]["pos"] = (G_power.nodes[n]["pos"][0], G_power.nodes[n]["pos"][1], 0.2
                                # if G_power.nodes[n]["type"] in ["GSP_transmission", "substation_transmission"]
                                # else 0.9 if G_power.nodes[n]["type"] == "generator"
                                # else 0.7 if G_power.nodes[n]["type"] == "load"
                                # else 0.4
                                )
     G_power.nodes[n]["network"] = "power"
+    G_power.nodes[n]["state"] = 1
 for u, v in G_power.edges():
     G_power.edges[u, v]["network"] = "power"
+    G_power.edges[u, v]["state"] = 1
 
 # Combine networks
 G_infra = nx.compose(G_transport, G_power)

@@ -1,7 +1,6 @@
 import networkx as nx
-import pandas as pd
 import numpy as np
-import random
+
 from math import radians, cos, sin, asin, sqrt
 import matplotlib.pyplot as plt
 
@@ -214,17 +213,32 @@ def linear_cluster(G, nodes_to_cluster):
 
 def transport_calc_centrality(G):
     """Calculate and assign transport network centralities by running time"""
+    assert G.is_directed()
 
-    for u, v in G.edges():
-        G.edges[u, v]["recip_running_time_min"] = 1. / max(1., G.edges[u, v]["running_time_min"])
+    bb = dict()
+    cc = dict()
+    cfb = dict()
+    eb = dict()
+    ecfb = dict()
 
-    bb = nx.betweenness_centrality(G, normalized=True, weight="running_time_min")
-    cc = nx.closeness_centrality(G, distance="running_time_min")
-    cfb = nx.current_flow_betweenness_centrality(G.to_undirected(), normalized=False, weight="recip_running_time_min")
+    for subG in weakly_connected_component_subgraphs(G, copy=True):
+        subG_undir = transport_to_undirected(subG)
 
-    eb = nx.edge_betweenness_centrality(G, normalized=True, weight="running_time_min")
-    ecfb = nx.edge_current_flow_betweenness_centrality(G.to_undirected(), normalized=False,
-                                                       weight="recip_running_time_min")
+        bb.update(nx.betweenness_centrality(subG_undir, normalized=True, weight="running_time_min"))
+
+        cc.update(nx.closeness_centrality(subG_undir, distance="running_time_min"))
+
+        # Do NOT normalise because network may break up into disconnected components -
+        #  but surrogate flows can still be estimated
+        cfb.update(nx.current_flow_betweenness_centrality(
+            subG_undir, normalized=False, weight="recip_running_time_min"))
+
+        eb.update(nx.edge_betweenness_centrality(subG_undir, normalized=True, weight="running_time_min"))
+
+        # Do NOT normalise because network may break up into disconnected components -
+        #  but surrogate flows can still be estimated
+        ecfb.update(nx.edge_current_flow_betweenness_centrality(
+            subG_undir, normalized=False, weight="recip_running_time_min"))
 
     nx.set_node_attributes(G, bb, 'betweenness')
     nx.set_node_attributes(G, cc, 'closeness')
@@ -243,30 +257,38 @@ def transport_calc_centrality(G):
 def transport_to_undirected(G):
     """Further simplifies directed transport network to undirected network"""
 
-    G_undir = nx.create_empty_copy(G, with_data=True)
+    if not nx.is_directed(G):
+        return G
+
+    G_undir = nx.create_empty_copy(G, with_data=True).to_undirected()
     for u, v in G.edges():
         G_undir.add_edge(u, v)
 
-        for rev_attr in ["StationA", "StationB"]:
-            G_undir.edges[u, v][rev_attr] = G.edges[u, v][rev_attr]
+        for rev_attr in ["StationA", "StationB", "Line", "Distance",
+                         "edge_betweenness", "edge_current_flow_betweenness"]:
+            if rev_attr in G.edges[u, v]:
+                G_undir.edges[u, v][rev_attr] = G.edges[u, v][rev_attr]
 
-        for sum_attr in ["flow", "flow_cap"]:
-            if G.has_edge(v, u):  # i.e. both directions exist
-                G_undir.edges[u, v][sum_attr] = G.edges[u, v][sum_attr] + G.edges[v, u][sum_attr]
-            else:  # only one direction exists
-                G_undir.edges[u, v][sum_attr] = G.edges[u, v][sum_attr]
+        for sum_attr in ["sp_flow", "flow", "flow_cap"]:
+            if sum_attr in G.edges[u, v]:
+                if G.has_edge(v, u):  # i.e. both directions exist
+                    G_undir.edges[u, v][sum_attr] = G.edges[u, v][sum_attr] + G.edges[v, u][sum_attr]
+                else:  # only one direction exists
+                    G_undir.edges[u, v][sum_attr] = G.edges[u, v][sum_attr]
 
-        for avg_attr in ["running_time_min", "Distance"]:
-            if G.has_edge(v, u):  # i.e. both directions exist
-                G_undir.edges[u, v][avg_attr] = np.nanmean([G.edges[u, v][avg_attr], G.edges[v, u][avg_attr]])
-            else:  # only one direction exists
-                G_undir.edges[u, v][avg_attr] = G.edges[u, v][avg_attr]
+        for avg_attr in ["running_time_min", "recip_running_time_min", "Distance", "rel_error"]:
+            if avg_attr in G.edges[u, v]:
+                if G.has_edge(v, u):  # i.e. both directions exist
+                    G_undir.edges[u, v][avg_attr] = np.nanmean([G.edges[u, v][avg_attr], G.edges[v, u][avg_attr]])
+                else:  # only one direction exists
+                    G_undir.edges[u, v][avg_attr] = G.edges[u, v][avg_attr]
 
     for u, v in G.edges():
-        G_undir.edges[u, v]["pct_flow_cap"] = G_undir.edges[u, v]["flow"] / G_undir.edges[u, v]["flow_cap"]
+        # Only if flow has already been calculated
+        if "flow" in G_undir.edges[u, v] and "flow_cap" in G_undir.edges[u, v]:
+            G_undir.edges[u, v]["pct_flow_cap"] = G_undir.edges[u, v]["flow"] / G_undir.edges[u, v]["flow_cap"]
 
-    # FIXME We may not actually need to do this here, but later on at each iteration of the simulation
-    G_undir = transport_calc_centrality(G_undir)
+    # TODO Run transport_calc_centrality later on at each iteration of the simulation
 
     return G_undir
 
@@ -322,6 +344,8 @@ def transport_compare_flow_dur_distribution():
 
 def power_calc_centrality(G):
     """Calculate and assign centralities by conductance"""
+    assert G.is_directed()
+
     cfb = dict()
     eb = dict()
     ecfb = dict()
@@ -332,17 +356,17 @@ def power_calc_centrality(G):
                     G.nodes[n]["type"] == "load"]
 
     for subG in weakly_connected_component_subgraphs(G, copy=True):
-        cfb.update(custom_cfb(
-            subG.to_undirected(), normalized=False, weight="conductance",
-            sources=source_nodes, targets=target_nodes))
-        # cfb.update(nx.current_flow_betweenness_centrality(subG.to_undirected(), normalized=False, weight="conductance"))
+        subG_undir = power_to_undirected(subG)
 
-        eb.update(nx.edge_betweenness_centrality(G, normalized=True, weight="resistance"))
-        ecfb.update(custom_ecfb(
-            subG.to_undirected(), normalized=False, weight="conductance",
+        cfb.update(custom_cfb(
+            subG_undir, normalized=False, weight="conductance",
             sources=source_nodes, targets=target_nodes))
-        # ecfb.update(nx.edge_current_flow_betweenness_centrality(subG.to_undirected(), normalized=False,
-        #                                                         weight="conductance"))
+
+        eb.update(nx.edge_betweenness_centrality(subG_undir, normalized=True, weight="resistance"))
+
+        ecfb.update(custom_ecfb(
+            subG_undir, normalized=False, weight="conductance",
+            sources=source_nodes, targets=target_nodes))
 
     nx.set_node_attributes(G, cfb, 'current_flow_betweenness')
 
@@ -423,19 +447,32 @@ def custom_cfb(G, sources, targets, normalized=True, weight=None, dtype=float, s
 def power_to_undirected(G):
     """Further simplifies directed power network to undirected network"""
 
-    G_undir = nx.create_empty_copy(G, with_data=True)
+    if not nx.is_directed(G):
+        return G
+
+    G_undir = nx.create_empty_copy(G, with_data=True).to_undirected()
     for u, v in G.edges():
         G_undir.add_edge(u, v)
 
-        for rev_attr in ["GSP", "Circuit Length km", "Operating Voltage kV"]:
+        for rev_attr in ["Line Name", "GSP", "Circuit Length km", "Operating Voltage kV",
+                         "Rating Amps Summer", "Rating Amps Winter",
+                         "G_base", "G_base_HV_LV1", "G_base_HV_LV2",
+                         "Voltage HV kV", "Voltage LV kV", "Voltage LV1 kV", "Voltage LV2 kV",
+                         "Transformer Rating Summer MVA", "Transformer Rating Winter MVA",
+                         "Transformer Rating MVA Summer HV",
+                         "Transformer Rating MVA Summer LV1", "Transformer Rating MVA Summer LV2",
+                         "Transformer Rating MVA Winter HV",
+                         "Transformer Rating MVA Winter LV1", "Transformer Rating MVA Winter LV2",
+                         "edge_betweenness", "edge_current_flow_betweenness"]:
             if rev_attr in G.edges[u, v]:
                 G_undir.edges[u, v][rev_attr] = G.edges[u, v][rev_attr]
 
         for sum_attr in ["flow", "flow_cap"]:
-            if G.has_edge(v, u):  # i.e. both directions exist
-                G_undir.edges[u, v][sum_attr] = G.edges[u, v][sum_attr] + G.edges[v, u][sum_attr]
-            else:  # only one direction exists
-                G_undir.edges[u, v][sum_attr] = G.edges[u, v][sum_attr]
+            if sum_attr in G.edges[u, v]:
+                if G.has_edge(v, u):  # i.e. both directions exist
+                    G_undir.edges[u, v][sum_attr] = G.edges[u, v][sum_attr] + G.edges[v, u][sum_attr]
+                else:  # only one direction exists
+                    G_undir.edges[u, v][sum_attr] = G.edges[u, v][sum_attr]
 
         for avg_attr in ["conductance", "resistance"]:
             if avg_attr in G.edges[u, v]:
@@ -445,7 +482,11 @@ def power_to_undirected(G):
                     G_undir.edges[u, v][avg_attr] = G.edges[u, v][avg_attr]
 
     for u, v in G.edges():
-        G_undir.edges[u, v]["pct_flow_cap"] = G_undir.edges[u, v]["flow"] / G_undir.edges[u, v]["flow_cap"]
+        # Only if flow has already been calculated
+        if "flow" in G_undir.edges[u, v] and "flow_cap" in G_undir.edges[u, v]:
+            G_undir.edges[u, v]["pct_flow_cap"] = G_undir.edges[u, v]["flow"] / G_undir.edges[u, v]["flow_cap"]
+
+    # TODO Run power_calc_centrality later on at each iteration of the simulation
 
     return G_undir
 
@@ -491,133 +532,3 @@ def network_plot_3D(G, angle):
     # Hide the axes
     ax.set_axis_off()
     plt.show()
-
-
-def get_node(G, network, mode="random", top=1):
-    # TODO TO TEST
-    """Returns a list of nodes in infrastructure node G, to be failed"""
-
-    assert network in ["power", "transport"]
-    assert mode in ["random", "degree", "closeness", "betweenness", "thruflow", "thruflow_cap", "pct_thruflow_cap"]
-    assert 1 <= top <= G.number_of_nodes()
-
-    if network in ["power", "transport"]:
-        G = G.subgraph([n for n in G.nodes() if G.nodes[n]["network"] == network]).copy()
-
-    if mode == "random":
-        node_list = [n for n in G.nodes()]
-        return random.choices(node_list, k=top)
-    elif mode in ["degree", "closeness", "betweenness"]:
-        if mode == "degree":
-            cc = nx.degree_centrality(G)
-        elif mode == "closeness":
-            cc = nx.closeness_centrality(G)
-        else:
-            cc = nx.betweenness_centrality(G)
-        df = pd.DataFrame.from_dict({
-            'node': list(cc.keys()),
-            'centrality': list(cc.values())
-        })
-        df = df.sort_values('centrality', ascending=False)
-        l = df["node"].tolist()
-        return l[0:top]
-    elif mode in ["thruflow", "thruflow_cap", "pct_thruflow_cap"]:
-        df = pd.DataFrame.from_dict({
-            'node': [n for n in G.nodes()],
-            mode: [G.nodes[n][mode] for n in G.nodes()]
-        })
-        df = df.sort_values(mode, ascending=False)
-        l = df["node"].tolist()
-        return l[0:top]
-
-
-def get_link(G, network, mode="random", top=1):
-    # TODO TO TEST
-    """Returns a list of links in infrastructure node G, to be failed. This ignores all interdependencies."""
-
-    assert network in ["power", "transport"]
-    assert mode in ["random", "betweenness", "flow", "flow_cap", "pct_flow_cap"]
-    assert 1 <= top <= G.number_of_edges()
-
-    if network in ["power", "transport"]:
-        G = G.subgraph([n for n in G.nodes() if G.nodes[n]["network"] == network]).copy()
-
-    if mode == "random":
-        link_list = [(u, v) for u, v in G.edges()]
-        return random.choices(link_list, k=top)
-    elif mode in ["betweenness"]:
-        if mode == "betweenness":
-            cc = nx.edge_betweenness_centrality(G)
-        df = pd.DataFrame.from_dict({
-            'link': list(cc.keys()),
-            'centrality': list(cc.values())
-        })
-        df = df.sort_values('centrality', ascending=False)
-        l = df["link"].tolist()
-        return l[0:top]
-    elif mode in ["flow", "flow_cap", "pct_flow_cap"]:
-        df = pd.DataFrame.from_dict({
-            'link': [(u, v) for u, v in G.edges()],
-            mode: [G.edges[u, v][mode] for u, v in G.edges()]
-        })
-        df = df.sort_values(mode, ascending=False)
-        l = df["link"].tolist()
-        return l[0:top]
-    else:
-        return list()
-
-
-def percolate_nodes(G, failed_nodes):
-    # TODO TO TEST
-    """Returns the network after failing the selected nodes. This does not do centrality or flow recalculation."""
-    for fn in failed_nodes:
-        assert fn in G.nodes()
-        G.nodes[fn]["state"] = 0
-        if G.is_directed():  # Also fail all links adjacent to fn to ensure a closed network
-            for su in G.successors(fn):
-                G.edges[fn, su]["state"] = 0
-            for pr in G.predecessors(fn):
-                G.edges[pr, fn]["state"] = 0
-        else:
-            for ne in G.neighbours(fn):
-                G.edges[fn, ne]["state"] = 0
-    return G
-
-
-def percolate_links(G, failed_links, reversible=True):
-    # TODO TO TEST
-    """Returns the network after failing the selected links. This does not do centrality or flow recalculation."""
-    for fl in failed_links:
-        assert fl in G.edges()
-        if G.is_directed():
-            G.edges[fl]["state"] = 0
-            if reversible:
-                if (fl[1], fl[0]) in G.edges:  # Also fail the link going in opposite direction
-                    G.edges[fl[1], fl[0]]["state"] = 0
-        else:
-            G.edges[fl]["state"] = 0
-
-
-def recompute_flows(G, newly_failed_nodes, newly_failed_links, shortest_paths, odmat):
-    """Recompute all flows for network"""
-    # TODO
-    #  - Split networks
-    #  FOR TRANSPORT NETWORKS - skip if nothing new failed:
-    #  - Search all shortest paths to see which paths would be affected by link removal
-    #  - For affected shortest paths:
-    #   -- See if SP starts or ends at removed node -> This leads to unfulfilled trips
-    #   -- Recalculate new/next shortest path -> Record increase in travel time
-    #   -- Remove affected flows (from O-D matrix) in links along old path, and re-add them
-    #      in the new path
-    #   -- If no path exists anymore --> This leads to unfulfilled trips
-    #  - Recompute current flow betweenness (if transport network is now disconnected, do for each subnetwork)
-    #  - Recompute new flows [* To integrate flow calculation in the initialisation]
-    #  FOR POWER NETWORKS - skip if nothing new failed:
-    #  - Check if power network is now disconnected
-    #  - If disconnected:
-    #   -- Check for each subgrid if supply can still meet demand [* To check the initial supply first and compare with demand - also for validation]
-    #   -- (More complicated logic can go here at a later date)
-    #   -- If unable to, fail the whole subgrid
-    #  - If still connected:
-    #   -- Recompute current flow betweenness
-    return NotImplemented
