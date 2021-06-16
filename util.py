@@ -1,7 +1,8 @@
-from math import radians, cos, sin, asin, sqrt
-
 import networkx as nx
+import pandas as pd
 import numpy as np
+import random
+from math import radians, cos, sin, asin, sqrt
 import matplotlib.pyplot as plt
 
 from globalparams import POWER_LINE_PP_EPS
@@ -490,3 +491,133 @@ def network_plot_3D(G, angle):
     # Hide the axes
     ax.set_axis_off()
     plt.show()
+
+
+def get_node(G, network, mode="random", top=1):
+    # TODO TO TEST
+    """Returns a list of nodes in infrastructure node G, to be failed"""
+
+    assert network in ["power", "transport"]
+    assert mode in ["random", "degree", "closeness", "betweenness", "thruflow", "thruflow_cap", "pct_thruflow_cap"]
+    assert 1 <= top <= G.number_of_nodes()
+
+    if network in ["power", "transport"]:
+        G = G.subgraph([n for n in G.nodes() if G.nodes[n]["network"] == network]).copy()
+
+    if mode == "random":
+        node_list = [n for n in G.nodes()]
+        return random.choices(node_list, k=top)
+    elif mode in ["degree", "closeness", "betweenness"]:
+        if mode == "degree":
+            cc = nx.degree_centrality(G)
+        elif mode == "closeness":
+            cc = nx.closeness_centrality(G)
+        else:
+            cc = nx.betweenness_centrality(G)
+        df = pd.DataFrame.from_dict({
+            'node': list(cc.keys()),
+            'centrality': list(cc.values())
+        })
+        df = df.sort_values('centrality', ascending=False)
+        l = df["node"].tolist()
+        return l[0:top]
+    elif mode in ["thruflow", "thruflow_cap", "pct_thruflow_cap"]:
+        df = pd.DataFrame.from_dict({
+            'node': [n for n in G.nodes()],
+            mode: [G.nodes[n][mode] for n in G.nodes()]
+        })
+        df = df.sort_values(mode, ascending=False)
+        l = df["node"].tolist()
+        return l[0:top]
+
+
+def get_link(G, network, mode="random", top=1):
+    # TODO TO TEST
+    """Returns a list of links in infrastructure node G, to be failed. This ignores all interdependencies."""
+
+    assert network in ["power", "transport"]
+    assert mode in ["random", "betweenness", "flow", "flow_cap", "pct_flow_cap"]
+    assert 1 <= top <= G.number_of_edges()
+
+    if network in ["power", "transport"]:
+        G = G.subgraph([n for n in G.nodes() if G.nodes[n]["network"] == network]).copy()
+
+    if mode == "random":
+        link_list = [(u, v) for u, v in G.edges()]
+        return random.choices(link_list, k=top)
+    elif mode in ["betweenness"]:
+        if mode == "betweenness":
+            cc = nx.edge_betweenness_centrality(G)
+        df = pd.DataFrame.from_dict({
+            'link': list(cc.keys()),
+            'centrality': list(cc.values())
+        })
+        df = df.sort_values('centrality', ascending=False)
+        l = df["link"].tolist()
+        return l[0:top]
+    elif mode in ["flow", "flow_cap", "pct_flow_cap"]:
+        df = pd.DataFrame.from_dict({
+            'link': [(u, v) for u, v in G.edges()],
+            mode: [G.edges[u, v][mode] for u, v in G.edges()]
+        })
+        df = df.sort_values(mode, ascending=False)
+        l = df["link"].tolist()
+        return l[0:top]
+    else:
+        return list()
+
+
+def percolate_nodes(G, failed_nodes):
+    # TODO TO TEST
+    """Returns the network after failing the selected nodes. This does not do centrality or flow recalculation."""
+    for fn in failed_nodes:
+        assert fn in G.nodes()
+        G.nodes[fn]["state"] = 0
+        if G.is_directed():  # Also fail all links adjacent to fn to ensure a closed network
+            for su in G.successors(fn):
+                G.edges[fn, su]["state"] = 0
+            for pr in G.predecessors(fn):
+                G.edges[pr, fn]["state"] = 0
+        else:
+            for ne in G.neighbours(fn):
+                G.edges[fn, ne]["state"] = 0
+    return G
+
+
+def percolate_links(G, failed_links, reversible=True):
+    # TODO TO TEST
+    """Returns the network after failing the selected links. This does not do centrality or flow recalculation."""
+    for fl in failed_links:
+        assert fl in G.edges()
+        if G.is_directed():
+            G.edges[fl]["state"] = 0
+            if reversible:
+                if (fl[1], fl[0]) in G.edges:  # Also fail the link going in opposite direction
+                    G.edges[fl[1], fl[0]]["state"] = 0
+        else:
+            G.edges[fl]["state"] = 0
+
+
+def recompute_flows(G, newly_failed_nodes, newly_failed_links, shortest_paths, odmat):
+    """Recompute all flows for network"""
+    # TODO
+    #  - Split networks
+    #  FOR TRANSPORT NETWORKS - skip if nothing new failed:
+    #  - Search all shortest paths to see which paths would be affected by link removal
+    #  - For affected shortest paths:
+    #   -- See if SP starts or ends at removed node -> This leads to unfulfilled trips
+    #   -- Recalculate new/next shortest path -> Record increase in travel time
+    #   -- Remove affected flows (from O-D matrix) in links along old path, and re-add them
+    #      in the new path
+    #   -- If no path exists anymore --> This leads to unfulfilled trips
+    #  - Recompute current flow betweenness (if transport network is now disconnected, do for each subnetwork)
+    #  - Recompute new flows [* To integrate flow calculation in the initialisation]
+    #  FOR POWER NETWORKS - skip if nothing new failed:
+    #  - Check if power network is now disconnected
+    #  - If disconnected:
+    #   -- Check for each subgrid if supply can still meet demand [* To check the initial supply first and compare with demand - also for validation]
+    #   -- (More complicated logic can go here at a later date)
+    #   -- If unable to, fail the whole subgrid
+    #  - If still connected:
+    #   -- Recompute current flow betweenness
+    return NotImplemented
