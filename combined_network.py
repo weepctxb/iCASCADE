@@ -20,8 +20,10 @@ for n in G_transport.nodes():
     G_transport.nodes[n]["pos"] = (G_transport.nodes[n]["pos"][0], G_transport.nodes[n]["pos"][1], 0)
     # 0 if G_transport.nodes[n]["line"].startswith(("lo-", "tfl-rail-")) else 0.1
     G_transport.nodes[n]["network"] = "transport"
+    G_transport.nodes[n]["state"] = 1
 for u, v in G_transport.edges():
     G_transport.edges[u, v]["network"] = "transport"
+    G_transport.edges[u, v]["state"] = 1
 for n in G_power.nodes():
     G_power.nodes[n]["pos"] = (G_power.nodes[n]["pos"][0], G_power.nodes[n]["pos"][1], 0.2
                                # if G_power.nodes[n]["type"] in ["GSP_transmission", "substation_transmission"]
@@ -41,7 +43,8 @@ G_infra = nx.compose(G_transport, G_power)
 # Load interdependencies
 physical_intdep = pd.read_excel("data/interdependencies/physical.xlsx", sheet_name="physical", header=0)
 for index, row in physical_intdep.iterrows():
-    G_infra.add_edge(row["UKPN_substation"], row["Train_multiplex_ID"], network="physical_interdependency")
+    G_infra.add_edge(row["UKPN_substation"], row["Train_multiplex_ID"],
+                     network="physical_interdependency", state=1)
 
 # Save combined network
 pickle.dump(G_infra, open(r'data/combined_network/infra_G.pkl', 'wb+'))

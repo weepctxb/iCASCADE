@@ -224,16 +224,16 @@ def transport_calc_centrality(G):
     for subG in weakly_connected_component_subgraphs(G, copy=True):
         subG_undir = transport_to_undirected(subG)
 
-        bb.update(nx.betweenness_centrality(subG_undir, normalized=True, weight="running_time_min"))
+        bb.update(nx.betweenness_centrality(subG, normalized=True, weight="running_time_min"))
 
-        cc.update(nx.closeness_centrality(subG_undir, distance="running_time_min"))
+        cc.update(nx.closeness_centrality(subG, distance="running_time_min"))
 
         # Do NOT normalise because network may break up into disconnected components -
         #  but surrogate flows can still be estimated
         cfb.update(nx.current_flow_betweenness_centrality(
             subG_undir, normalized=False, weight="recip_running_time_min"))
 
-        eb.update(nx.edge_betweenness_centrality(subG_undir, normalized=True, weight="running_time_min"))
+        eb.update(nx.edge_betweenness_centrality(subG, normalized=True, weight="running_time_min"))
 
         # Do NOT normalise because network may break up into disconnected components -
         #  but surrogate flows can still be estimated
@@ -360,13 +360,13 @@ def power_calc_centrality(G):
 
         cfb.update(custom_cfb(
             subG_undir, normalized=False, weight="conductance",
-            sources=source_nodes, targets=target_nodes))
+            sources=source_nodes, targets=target_nodes, solver="full"))
 
-        eb.update(nx.edge_betweenness_centrality(subG_undir, normalized=True, weight="resistance"))
+        eb.update(nx.edge_betweenness_centrality(subG, normalized=True, weight="resistance"))
 
         ecfb.update(custom_ecfb(
             subG_undir, normalized=False, weight="conductance",
-            sources=source_nodes, targets=target_nodes))
+            sources=source_nodes, targets=target_nodes, solver="full"))
 
     nx.set_node_attributes(G, cfb, 'current_flow_betweenness')
 
@@ -380,68 +380,79 @@ def power_calc_centrality(G):
     return G
 
 
-def custom_ecfb(G, sources, targets, normalized=True, weight=None, dtype=float, solver="lu"):
+def custom_ecfb(G, sources, targets, normalized=True, weight=None, dtype=float, solver="lu", mode="slow"):
     """Custom implementation of nx.edge_current_flow_betweenness_centrality_subset"""
 
-    from networkx.utils import reverse_cuthill_mckee_ordering
-    from networkx.algorithms.centrality.flow_matrix import flow_matrix_row
+    if mode == "slow":
+        from networkx.utils import reverse_cuthill_mckee_ordering
+        from networkx.algorithms.centrality.flow_matrix import flow_matrix_row
 
-    if not nx.is_connected(G):
-        raise nx.NetworkXError("Graph not connected.")
-    n = G.number_of_nodes()
-    ordering = list(reverse_cuthill_mckee_ordering(G))
-    # make a copy with integer labels according to rcm ordering
-    # this could be done without a copy if we really wanted to
-    mapping = dict(zip(ordering, range(n)))
-    H = nx.relabel_nodes(G, mapping)
-    edges = (tuple(sorted((u, v))) for u, v in H.edges())
-    betweenness = dict.fromkeys(edges, 0.0)
-    if normalized:
-        nb = (n - 1.0) * (n - 2.0)  # normalization factor
-    else:
-        nb = 2.0
-    for row, (e) in flow_matrix_row(H, weight=weight, dtype=dtype, solver=solver):
-        for ss in sources:
-            i = mapping[ss]
-            for tt in targets:
-                j = mapping[tt]
-                betweenness[e] += 0.5 * np.abs(row[i] - row[j]) * \
-                                  sqrt(G.nodes[ss]["thruflow_cap"] * G.nodes[tt]["thruflow_cap"])
-        betweenness[e] /= nb
-    return {(ordering[s], ordering[t]): v for (s, t), v in betweenness.items()}
+        if not nx.is_connected(G):
+            raise nx.NetworkXError("Graph not connected.")
+        n = G.number_of_nodes()
+        ordering = list(reverse_cuthill_mckee_ordering(G))
+        # make a copy with integer labels according to rcm ordering
+        # this could be done without a copy if we really wanted to
+        mapping = dict(zip(ordering, range(n)))
+        H = nx.relabel_nodes(G, mapping)
+        edges = (tuple(sorted((u, v))) for u, v in H.edges())
+        betweenness = dict.fromkeys(edges, 0.0)
+        if normalized:
+            nb = (n - 1.0) * (n - 2.0)  # normalization factor
+        else:
+            nb = 2.0
+        for row, (e) in flow_matrix_row(H, weight=weight, dtype=dtype, solver=solver):
+            for ss in sources:
+                i = mapping[ss]
+                for tt in targets:
+                    j = mapping[tt]
+                    betweenness[e] += 0.5 * np.abs(row[i] - row[j]) * \
+                                      sqrt(G.nodes[ss]["thruflow_cap"] * G.nodes[tt]["thruflow_cap"])
+            betweenness[e] /= nb
+        return {(ordering[s], ordering[t]): v for (s, t), v in betweenness.items()}
+
+    elif mode == "fast":
+        return NotImplementedError
 
 
-def custom_cfb(G, sources, targets, normalized=True, weight=None, dtype=float, solver="lu"):
+def custom_cfb(G, sources, targets, normalized=True, weight=None, dtype=float, solver="lu", mode="slow"):
     """Custom implementation of nx.current_flow_betweenness_centrality_subset"""
 
-    from networkx.utils import reverse_cuthill_mckee_ordering
-    from networkx.algorithms.centrality.flow_matrix import flow_matrix_row
+    if mode == "slow":
+        from networkx.utils import reverse_cuthill_mckee_ordering
+        from networkx.algorithms.centrality.flow_matrix import flow_matrix_row
 
-    if not nx.is_connected(G):
-        raise nx.NetworkXError("Graph not connected.")
-    n = G.number_of_nodes()
-    ordering = list(reverse_cuthill_mckee_ordering(G))
-    # make a copy with integer labels according to rcm ordering
-    # this could be done without a copy if we really wanted to
-    mapping = dict(zip(ordering, range(n)))
-    H = nx.relabel_nodes(G, mapping)
-    betweenness = dict.fromkeys(H, 0.0)  # b[v]=0 for v in H
-    for row, (s, t) in flow_matrix_row(H, weight=weight, dtype=dtype, solver=solver):
-        for ss in sources:
-            i = mapping[ss]
-            for tt in targets:
-                j = mapping[tt]
-                betweenness[s] += 0.5 * np.abs(row[i] - row[j])  * \
-                                  sqrt(G.nodes[ss]["thruflow_cap"] * G.nodes[tt]["thruflow_cap"])
-                betweenness[t] += 0.5 * np.abs(row[i] - row[j]) * \
-                                  sqrt(G.nodes[ss]["thruflow_cap"] * G.nodes[tt]["thruflow_cap"])
-    if normalized:
-        nb = (n - 1.0) * (n - 2.0)  # normalization factor
-    else:
-        nb = 2.0
-    for v in H:
-        betweenness[v] = betweenness[v] / nb + 1.0 / (2 - n)
-    return {ordering[k]: v for k, v in betweenness.items()}
+        if not nx.is_connected(G):
+            raise nx.NetworkXError("Graph not connected.")
+        n = G.number_of_nodes()
+        ordering = list(reverse_cuthill_mckee_ordering(G))
+        # make a copy with integer labels according to rcm ordering
+        # this could be done without a copy if we really wanted to
+        mapping = dict(zip(ordering, range(n)))
+        H = nx.relabel_nodes(G, mapping)
+        betweenness = dict.fromkeys(H, 0.0)  # b[v]=0 for v in H
+        for row, (s, t) in flow_matrix_row(H, weight=weight, dtype=dtype, solver=solver):
+            for ss in sources:
+                i = mapping[ss]
+                for tt in targets:
+                    j = mapping[tt]
+                    betweenness[s] += 0.5 * np.abs(row[i] - row[j])  * \
+                                      sqrt(G.nodes[ss]["thruflow_cap"] * G.nodes[tt]["thruflow_cap"])
+                    betweenness[t] += 0.5 * np.abs(row[i] - row[j]) * \
+                                      sqrt(G.nodes[ss]["thruflow_cap"] * G.nodes[tt]["thruflow_cap"])
+        if normalized:
+            nb = (n - 1.0) * (n - 2.0)  # normalization factor
+        else:
+            nb = 2.0
+        for v in H:
+            if n > 2:  # PATCH
+                betweenness[v] = betweenness[v] / nb + 1.0 / (2 - n)
+            elif n == 2:  # PATCH
+                betweenness[v] = betweenness[v] / nb
+        return {ordering[k]: v for k, v in betweenness.items()}
+
+    elif mode == "fast":
+        return NotImplementedError
 
 
 def power_to_undirected(G):
