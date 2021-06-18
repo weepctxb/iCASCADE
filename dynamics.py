@@ -1,3 +1,5 @@
+import copy
+
 import networkx as nx
 import numpy as np
 import pandas as pd
@@ -20,7 +22,7 @@ def get_node(G, network, mode="random", top=1):
         node_list = [n for n in G.nodes()]
         ids = random.choices(node_list, k=top)
         labels = [G.nodes[n]["nodeLabel"] for n in ids]
-        print("Node", str(ids), "initial failure")
+        print("Node(s)", str(ids), "initial failure")
         return ids, labels
     elif mode in ["degree", "closeness", "betweenness"]:
         if mode == "degree":
@@ -38,7 +40,7 @@ def get_node(G, network, mode="random", top=1):
         l = df["node"].tolist()
         ids = l[0:top]
         labels = [G.nodes[n]["nodeLabel"] for n in ids]
-        print("Node", str(ids), "initial failure")
+        print("Node(s)", str(ids), "initial failure")
         return ids, labels
     elif mode in ["thruflow", "thruflow_cap", "pct_thruflow_cap"]:
         df = pd.DataFrame.from_dict({
@@ -49,7 +51,7 @@ def get_node(G, network, mode="random", top=1):
         l = df["node"].tolist()
         ids = l[0:top]
         labels = [G.nodes[n]["nodeLabel"] for n in ids]
-        print("Node", str(ids), "initial failure")
+        print("Node(s)", str(ids), "initial failure")
         return ids, labels
     else:
         return list()
@@ -69,7 +71,7 @@ def get_link(G, network, mode="random", top=1):
         link_list = [(u, v) for u, v in G.edges()]
         ids = random.choices(link_list, k=top)
         labels = [(G.nodes[u]["nodeLabel"], G.nodes[v]["nodeLabel"]) for (u, v) in ids]
-        print("Link", str(ids), "initial failure")
+        print("Link(s)", str(ids), "initial failure")
         return ids, labels
     elif mode in ["betweenness"]:
         if mode == "betweenness":
@@ -82,7 +84,7 @@ def get_link(G, network, mode="random", top=1):
         l = df["link"].tolist()
         ids = l[0:top]
         labels = [(G.nodes[u]["nodeLabel"], G.nodes[v]["nodeLabel"]) for (u, v) in ids]
-        print("Link", str(ids), "initial failure")
+        print("Link(s)", str(ids), "initial failure")
         return ids, labels
     elif mode in ["flow", "flow_cap", "pct_flow_cap"]:
         df = pd.DataFrame.from_dict({
@@ -93,7 +95,7 @@ def get_link(G, network, mode="random", top=1):
         l = df["link"].tolist()
         ids = l[0:top]
         labels = [(G.nodes[u]["nodeLabel"], G.nodes[v]["nodeLabel"]) for (u, v) in ids]
-        print("Link", str(ids), "initial failure")
+        print("Link(s)", str(ids), "initial failure")
         return ids, labels
     else:
         return list()
@@ -164,12 +166,13 @@ def recompute_flows(G, newly_failed_nodes, newly_failed_links, shortest_paths):
     for fl in newly_failed_links:
         for s in shortest_paths:
             for t in shortest_paths[s]:  # iterate through all shortest paths
-                for u, v in zip(shortest_paths[s][t]["path"][:-1], shortest_paths[s][t]["path"][1:]):
-                    if fl == (u, v):  # if newly-failed link is along shortest path
-                        affected_shortest_paths.append((s, t))
+                if shortest_paths[s][t]["path"] is not None:  # only if it exists
+                    for u, v in zip(shortest_paths[s][t]["path"][:-1], shortest_paths[s][t]["path"][1:]):
+                        if fl == (u, v):  # if newly-failed link is along shortest path
+                            affected_shortest_paths.append((s, t))
 
     # Create new copy of shortest_paths dict
-    new_shortest_paths = shortest_paths.copy()
+    new_shortest_paths = copy.deepcopy(shortest_paths)
 
     # Track unfulfilled trips and/or calculate new shortest paths
     for sp in affected_shortest_paths:
@@ -179,26 +182,28 @@ def recompute_flows(G, newly_failed_nodes, newly_failed_links, shortest_paths):
             new_shortest_paths[s][t]["path"] = None
             new_shortest_paths[s][t]["travel_time"] = np.inf
             new_shortest_paths[s][t]["length"] = np.inf
-            new_shortest_paths[s][t]["flow"] = shortest_paths[s][t]["flow"]  # O-D matrix remains the same
+            new_shortest_paths[s][t]["flow"] = 0  # Since all these trips are unfulfilled
         elif t in newly_failed_nodes:
             print("Trips between", s, t, "unfulfilled because t failed")
             new_shortest_paths[s][t]["path"] = None
             new_shortest_paths[s][t]["travel_time"] = np.inf
             new_shortest_paths[s][t]["length"] = np.inf
-            new_shortest_paths[s][t]["flow"] = shortest_paths[s][t]["flow"]  # O-D matrix remains the same
+            new_shortest_paths[s][t]["flow"] = 0  # Since all these trips are unfulfilled
         else:
             try:
                 # This implementation reduces the number of Dijkstra runs significantly (only run for affected st-pairs)
-                travel_time, path = nx.dijkstra_path(GT, source=s, target=t, weight='running_time_min')
+                travel_time, path = nx.single_source_dijkstra(GT, source=s, target=t, weight='running_time_min')
                 new_shortest_paths[s][t]["path"] = path
                 new_shortest_paths[s][t]["travel_time"] = travel_time
                 new_shortest_paths[s][t]["length"] = len(new_shortest_paths[s][t]["path"])
-                print("Trips between", s, t, "rerouted successfully")
+                new_shortest_paths[s][t]["flow"] = shortest_paths[s][t]["flow"]  # O-D matrix remains the same
+                # print("Trips between", s, t, "rerouted successfully")
             except nx.NetworkXNoPath:  # No path exists between source and target
                 print("Trips between", s, t, "unfulfilled because no SP exists between s and t (network disconnected)")
                 new_shortest_paths[s][t]["path"] = None
                 new_shortest_paths[s][t]["travel_time"] = np.inf
                 new_shortest_paths[s][t]["length"] = np.inf
+                new_shortest_paths[s][t]["flow"] = 0  # Since all these trips are unfulfilled
 
     # Adjust flows accordingly
     for sp in affected_shortest_paths:
@@ -206,9 +211,12 @@ def recompute_flows(G, newly_failed_nodes, newly_failed_links, shortest_paths):
         # Remove flows from all links in affected SP
         for u, v in zip(shortest_paths[s][t]["path"][:-1], shortest_paths[s][t]["path"][1:]):
             new_G.edges[u, v]["sp_flow"] -= shortest_paths[s][t]["flow"]
-        # Add flows from all links in new SP
-        for u, v in zip(new_shortest_paths[s][t]["path"][:-1], new_shortest_paths[s][t]["path"][1:]):
-            new_G.edges[u, v]["sp_flow"] += new_shortest_paths[s][t]["flow"]
+            if new_G.edges[u, v]["sp_flow"] < 0:
+                new_G.edges[u, v]["sp_flow"] = 0  # PATCH floating point error when sp_flow subtracted to zero
+        # Add flows from all links in new SP, but only if it exists
+        if new_shortest_paths[s][t]["path"] is not None:
+            for u, v in zip(new_shortest_paths[s][t]["path"][:-1], new_shortest_paths[s][t]["path"][1:]):
+                new_G.edges[u, v]["sp_flow"] += new_shortest_paths[s][t]["flow"]
 
     for subGT in weakly_connected_component_subgraphs(GT, copy=True):
         subGT = transport_calc_centrality(subGT)
@@ -223,8 +231,9 @@ def recompute_flows(G, newly_failed_nodes, newly_failed_links, shortest_paths):
     # Combine into hybrid measure for link flow,
     #  and Assign baseline % capacity utilised
     for u, v in GT.edges():
-        new_G.edges[u, v]["flow"] = (float(new_G.edges[u, v]["sp_flow"]) ** 0.64) * \
-                                    (float(new_G.edges[u, v]["edge_current_flow_betweenness"]) ** 0.39)
+        # PATCH floating point error when sp_flow subtracted to zero, or when edge_current_flow_betweenness < 0
+        new_G.edges[u, v]["flow"] = (float(max(new_G.edges[u, v]["sp_flow"], 0)) ** 0.64) * \
+                                    (float(max(new_G.edges[u, v]["edge_current_flow_betweenness"], 0)) ** 0.39)
         new_G.edges[u, v]["pct_flow_cap"] = new_G.edges[u, v]["flow"] / new_G.edges[u, v]["flow_cap"]
 
     # Assign baseline node thruflows,

@@ -2,10 +2,12 @@ import json
 import pickle
 
 from dynamics import get_node, percolate_nodes, percolate_links, recompute_flows, fail_flow, fail_SIS
+from util import parse_json
 
 # Retrieve shortest paths for transport network
 with open(r'data/transport_multiplex/flow/shortest_paths.json', 'r') as json_file:
     shortest_paths = json.load(json_file)
+shortest_paths = parse_json(shortest_paths)
 
 # Load original network, create temporal network, initialise time horizon and initialise failed nodes and links
 G_original = pickle.load(open(r'data/combined_network/infra_G.pkl', "rb"))
@@ -16,9 +18,9 @@ failed_links = {t: list() for t in range(TIME_HORIZON)}
 
 # Specify initial failure scenario
 print("ITERATION 1")
-# failed_nodes[0], _ = get_node(G[0], network="power", mode="random", top=1)
-failed_nodes[0] = ["Kingsway 11kV Gen"]
-# failed_nodes[0] = [0]
+# failed_nodes[0], _ = get_node(G[0], network="transport", mode="degree", top=1)
+# failed_nodes[0] = ["Kingsway 11kV Gen"]
+failed_nodes[0] = [0]
 
 # Percolate failed nodes & links
 Gn, failed_links[0] = percolate_nodes(G[0], failed_nodes=failed_nodes[0])
@@ -33,8 +35,8 @@ G[1], shortest_paths, failed_nodes[1], failed_links[1] = \
 
 # Identify failures based on flow capacity or surges
 newly_failed_links_flow = fail_flow(G[1], G[0],
-                                    cap_lwr_threshold=360.0, cap_upp_threshold=400.0,
-                                    ratio_lwr_threshold=1.5, ratio_upp_threshold=2.0)
+                                    cap_lwr_threshold=0.9, cap_upp_threshold=1.0,
+                                    ratio_lwr_threshold=1.5, ratio_upp_threshold=2.0)  # 360, 400, 1.5, 2
 failed_links[1].extend(newly_failed_links_flow)
 
 # Identify failures based on diffusion process # TODO Failure diffusion
@@ -59,7 +61,7 @@ for t in range(2, TIME_HORIZON):
 
     # Identify failures based on flow capacity or surges
     newly_failed_links_flow = fail_flow(G[t], G[t-1],
-                                        cap_lwr_threshold=450.0, cap_upp_threshold=500.0,
+                                        cap_lwr_threshold=0.9, cap_upp_threshold=1.0,
                                         ratio_lwr_threshold=1.5, ratio_upp_threshold=2.0)
     failed_links[t].extend(newly_failed_links_flow)
 

@@ -1,5 +1,6 @@
 import networkx as nx
 import numpy as np
+import copy
 
 from math import radians, cos, sin, asin, sqrt
 import matplotlib.pyplot as plt
@@ -11,6 +12,25 @@ def hex_to_rgb(value):
     value = value.lstrip('#')
     lv = len(value)
     return list(int(value[i:i + lv // 3], 16) for i in range(0, lv, lv // 3)) + [255]
+
+
+def parse_json(shortest_paths):
+    for s in list(shortest_paths.keys()):
+        if not isinstance(s, int):  # PATCH - keys in json are in strings for some reason (JSON encoder issue)
+            try:
+                shortest_paths[int(s)] = copy.deepcopy(shortest_paths[s])
+                shortest_paths.pop(s)
+            except ValueError as e:
+                continue
+    for s in list(shortest_paths.keys()):
+        for t in list(shortest_paths[s].keys()):
+            if not isinstance(t, int):  # PATCH - keys in json are in strings for some reason (JSON encoder issue)
+                try:
+                    shortest_paths[s][int(t)] = copy.deepcopy(shortest_paths[s][t])
+                    shortest_paths[s].pop(t)
+                except ValueError as e:
+                    continue
+    return shortest_paths
 
 
 def haversine(lon1, lat1, lon2, lat2):
