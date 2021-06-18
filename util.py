@@ -140,16 +140,16 @@ def linear_cluster(G, nodes_to_cluster):
                 line="-".join(np.unique([G1.nodes[n]["line"] for n in nodes_to_cluster])),
                 NLC="-".join([str(G1.nodes[n]["NLC"]) for n in nodes_to_cluster]),
                 railway="station",
-                flow_in=round(sum([G1.nodes[n]["flow_in"] for n in nodes_to_cluster])),
-                flow_out=round(sum([G1.nodes[n]["flow_out"] for n in nodes_to_cluster])),
+                flow_in=sum([G1.nodes[n]["flow_in"] for n in nodes_to_cluster]),
+                flow_out=sum([G1.nodes[n]["flow_out"] for n in nodes_to_cluster]),
                 thruflow=G1.edges[nb_left[-1], nodes_to_cluster[0]]["flow"] +
                          G1.edges[nodes_to_cluster[-1], nb_right[0]]["flow"],
-                thruflow_cap=round((sum([G1.nodes[n]["flow_in"] for n in nodes_to_cluster]) +
+                thruflow_cap=sum([G1.nodes[n]["flow_in"] for n in nodes_to_cluster]) +
                              sum([G1.nodes[n]["flow_out"] for n in nodes_to_cluster]) +
-                             G1.edges[nb_left[-1], nodes_to_cluster[0]]["flow_cap"] +
+                             (G1.edges[nb_left[-1], nodes_to_cluster[0]]["flow_cap"] +
                              G1.edges[nodes_to_cluster[0], nb_left[-1]]["flow_cap"] +
                              G1.edges[nodes_to_cluster[-1], nb_right[0]]["flow_cap"] +
-                             G1.edges[nb_right[0], nodes_to_cluster[-1]]["flow_cap"]) / 2),
+                             G1.edges[nb_right[0], nodes_to_cluster[-1]]["flow_cap"]) / 2,
                 pct_thruflow_cap=(G1.edges[nb_left[-1], nodes_to_cluster[0]]["flow"] +
                                   G1.edges[nodes_to_cluster[-1], nb_right[0]]["flow"]) /
                                  (G1.edges[nb_left[-1], nodes_to_cluster[0]]["flow_cap"] +
@@ -367,8 +367,10 @@ def power_calc_centrality(G):
     assert G.is_directed()
 
     cfb = dict()
+    cfb_max = dict()
     eb = dict()
     ecfb = dict()
+    ecfb_max = dict()
 
     source_nodes = [n for n in G.nodes() if
                     (G.nodes[n]["type"] == "generator" or G.nodes[n]["type"] == "GSP_transmission")]
@@ -380,99 +382,127 @@ def power_calc_centrality(G):
 
         cfb.update(custom_cfb(
             subG_undir, normalized=False, weight="conductance",
-            sources=source_nodes, targets=target_nodes, solver="full"))
+            sources=source_nodes, targets=target_nodes, solver="full", max=False))
+
+        cfb_max.update(custom_cfb(
+            subG_undir, normalized=False, weight="conductance",
+            sources=source_nodes, targets=target_nodes, solver="full", max=True))
 
         eb.update(nx.edge_betweenness_centrality(subG, normalized=True, weight="resistance"))
 
         ecfb.update(custom_ecfb(
             subG_undir, normalized=False, weight="conductance",
-            sources=source_nodes, targets=target_nodes, solver="full"))
+            sources=source_nodes, targets=target_nodes, solver="full", max=False))
+
+        ecfb_max.update(custom_ecfb(
+            subG_undir, normalized=False, weight="conductance",
+            sources=source_nodes, targets=target_nodes, solver="full", max=True))
 
     nx.set_node_attributes(G, cfb, 'current_flow_betweenness')
+    nx.set_node_attributes(G, cfb_max, 'current_flow_betweenness_max')
 
     nx.set_edge_attributes(G, eb, 'edge_betweenness')
     for u, v in G.edges():
         try:
-            G.edges[u, v]["edge_current_flow_betweenness"] = ecfb[(u, v)]
+            G.edges[u, v]["edge_current_flow_betweenness"] = max(np.spacing(1.0), ecfb[(u, v)])
         except Exception as e:
-            G.edges[u, v]["edge_current_flow_betweenness"] = ecfb[(v, u)]  # PATCH
+            G.edges[u, v]["edge_current_flow_betweenness"] = max(np.spacing(1.0), ecfb[(v, u)])  # PATCH reversible links
+    for u, v in G.edges():
+        try:
+            G.edges[u, v]["edge_current_flow_betweenness_max"] = max(np.spacing(1.0), ecfb_max[(u, v)])
+        except Exception as e:
+            G.edges[u, v]["edge_current_flow_betweenness_max"] = max(np.spacing(1.0), ecfb_max[(v, u)])  # PATCH reversible links
 
     return G
 
 
-def custom_ecfb(G, sources, targets, normalized=True, weight=None, dtype=float, solver="lu", mode="slow"):
+def custom_ecfb(G, sources, targets, normalized=True, weight=None, dtype=float, solver="lu", max=False):
     """Custom implementation of nx.edge_current_flow_betweenness_centrality_subset"""
 
-    if mode == "slow":
-        from networkx.utils import reverse_cuthill_mckee_ordering
-        from networkx.algorithms.centrality.flow_matrix import flow_matrix_row
+    from networkx.utils import reverse_cuthill_mckee_ordering
+    from networkx.algorithms.centrality.flow_matrix import flow_matrix_row
 
-        if not nx.is_connected(G):
-            raise nx.NetworkXError("Graph not connected.")
-        n = G.number_of_nodes()
-        ordering = list(reverse_cuthill_mckee_ordering(G))
-        # make a copy with integer labels according to rcm ordering
-        # this could be done without a copy if we really wanted to
-        mapping = dict(zip(ordering, range(n)))
-        H = nx.relabel_nodes(G, mapping)
-        edges = (tuple(sorted((u, v))) for u, v in H.edges())
-        betweenness = dict.fromkeys(edges, 0.0)
-        if normalized:
-            nb = (n - 1.0) * (n - 2.0)  # normalization factor
-        else:
-            nb = 2.0
-        for row, (e) in flow_matrix_row(H, weight=weight, dtype=dtype, solver=solver):
-            for ss in sources:
-                i = mapping[ss]
-                for tt in targets:
-                    j = mapping[tt]
+    if not nx.is_connected(G):
+        raise nx.NetworkXError("Graph not connected.")
+    n = G.number_of_nodes()
+    ordering = list(reverse_cuthill_mckee_ordering(G))
+    # make a copy with integer labels according to rcm ordering
+    # this could be done without a copy if we really wanted to
+    mapping = dict(zip(ordering, range(n)))
+    H = nx.relabel_nodes(G, mapping)
+    edges = (tuple(sorted((u, v))) for u, v in H.edges())
+    betweenness = dict.fromkeys(edges, 0.0)
+    if normalized:
+        nb = (n - 1.0) * (n - 2.0)  # normalization factor
+    else:
+        nb = 2.0
+    for row, (e) in flow_matrix_row(H, weight=weight, dtype=dtype, solver=solver):
+        for ss in sources:
+            i = mapping[ss]
+            for tt in targets:
+                j = mapping[tt]
+                if max:  # generator at nameplate capacity, transmission GSP at max, substation at maximum demand
                     betweenness[e] += 0.5 * np.abs(row[i] - row[j]) * \
                                       sqrt(G.nodes[ss]["thruflow_cap"] * G.nodes[tt]["thruflow_cap"])
-            betweenness[e] /= nb
-        return {(ordering[s], ordering[t]): v for (s, t), v in betweenness.items()}
+                else:  # generator at average capacity, transmission GSP at max, substation at average demand
+                    betweenness[e] += 0.5 * np.abs(row[i] - row[j]) * \
+                                      sqrt(G.nodes[ss]["thruflow_cap"] * \
+                                           (G.nodes[ss]["Capacity_Factor"]
+                                            if G.nodes[ss]["type"] == "generator" else 1.) * \
+                                           G.nodes[tt]["thruflow_cap"] * \
+                                           (1 + G.nodes[tt]["Minimum_Load_Scaling_Factor_winter"]) / 2)
+        betweenness[e] /= nb
+    return {(ordering[s], ordering[t]): v for (s, t), v in betweenness.items()}
 
-    elif mode == "fast":
-        return NotImplementedError
 
-
-def custom_cfb(G, sources, targets, normalized=True, weight=None, dtype=float, solver="lu", mode="slow"):
+def custom_cfb(G, sources, targets, normalized=True, weight=None, dtype=float, solver="lu", max=False):
     """Custom implementation of nx.current_flow_betweenness_centrality_subset"""
 
-    if mode == "slow":
-        from networkx.utils import reverse_cuthill_mckee_ordering
-        from networkx.algorithms.centrality.flow_matrix import flow_matrix_row
+    from networkx.utils import reverse_cuthill_mckee_ordering
+    from networkx.algorithms.centrality.flow_matrix import flow_matrix_row
 
-        if not nx.is_connected(G):
-            raise nx.NetworkXError("Graph not connected.")
-        n = G.number_of_nodes()
-        ordering = list(reverse_cuthill_mckee_ordering(G))
-        # make a copy with integer labels according to rcm ordering
-        # this could be done without a copy if we really wanted to
-        mapping = dict(zip(ordering, range(n)))
-        H = nx.relabel_nodes(G, mapping)
-        betweenness = dict.fromkeys(H, 0.0)  # b[v]=0 for v in H
-        for row, (s, t) in flow_matrix_row(H, weight=weight, dtype=dtype, solver=solver):
-            for ss in sources:
-                i = mapping[ss]
-                for tt in targets:
-                    j = mapping[tt]
-                    betweenness[s] += 0.5 * np.abs(row[i] - row[j])  * \
+    if not nx.is_connected(G):
+        raise nx.NetworkXError("Graph not connected.")
+    n = G.number_of_nodes()
+    ordering = list(reverse_cuthill_mckee_ordering(G))
+    # make a copy with integer labels according to rcm ordering
+    # this could be done without a copy if we really wanted to
+    mapping = dict(zip(ordering, range(n)))
+    H = nx.relabel_nodes(G, mapping)
+    betweenness = dict.fromkeys(H, 0.0)  # b[v]=0 for v in H
+    for row, (s, t) in flow_matrix_row(H, weight=weight, dtype=dtype, solver=solver):
+        for ss in sources:
+            i = mapping[ss]
+            for tt in targets:
+                j = mapping[tt]
+                if max:  # generator at nameplate capacity, transmission GSP at max, substation at maximum demand
+                    betweenness[s] += 0.5 * np.abs(row[i] - row[j]) * \
                                       sqrt(G.nodes[ss]["thruflow_cap"] * G.nodes[tt]["thruflow_cap"])
                     betweenness[t] += 0.5 * np.abs(row[i] - row[j]) * \
                                       sqrt(G.nodes[ss]["thruflow_cap"] * G.nodes[tt]["thruflow_cap"])
-        if normalized:
-            nb = (n - 1.0) * (n - 2.0)  # normalization factor
-        else:
-            nb = 2.0
-        for v in H:
-            if n > 2:  # PATCH
-                betweenness[v] = betweenness[v] / nb + 1.0 / (2 - n)
-            elif n == 2:  # PATCH
-                betweenness[v] = betweenness[v] / nb
-        return {ordering[k]: v for k, v in betweenness.items()}
-
-    elif mode == "fast":
-        return NotImplementedError
+                else:  # generator at average capacity, transmission GSP at max, substation at average demand
+                    betweenness[s] += 0.5 * np.abs(row[i] - row[j]) * \
+                                      sqrt(G.nodes[ss]["thruflow_cap"] *
+                                           (G.nodes[ss]["Capacity_Factor"]
+                                            if G.nodes[ss]["type"] == "generator" else 1.) * \
+                                           G.nodes[tt]["thruflow_cap"] * \
+                                           (1 + G.nodes[tt]["Minimum_Load_Scaling_Factor_winter"]) / 2)
+                    betweenness[t] += 0.5 * np.abs(row[i] - row[j]) * \
+                                      sqrt(G.nodes[ss]["thruflow_cap"] *
+                                           (G.nodes[ss]["Capacity_Factor"]
+                                            if G.nodes[ss]["type"] == "generator" else 1.) * \
+                                           G.nodes[tt]["thruflow_cap"] * \
+                                           (1 + G.nodes[tt]["Minimum_Load_Scaling_Factor_winter"]) / 2)
+    if normalized:
+        nb = (n - 1.0) * (n - 2.0)  # normalization factor
+    else:
+        nb = 2.0
+    for v in H:
+        if n > 2:  # PATCH
+            betweenness[v] = betweenness[v] / nb + 1.0 / (2 - n)
+        elif n == 2:  # PATCH
+            betweenness[v] = betweenness[v] / nb
+    return {ordering[k]: v for k, v in betweenness.items()}
 
 
 def power_to_undirected(G):
@@ -498,7 +528,7 @@ def power_to_undirected(G):
             if rev_attr in G.edges[u, v]:
                 G_undir.edges[u, v][rev_attr] = G.edges[u, v][rev_attr]
 
-        for sum_attr in ["flow", "flow_cap"]:
+        for sum_attr in ["flow", "flow_cap", "flow_max"]:
             if sum_attr in G.edges[u, v]:
                 if G.has_edge(v, u):  # i.e. both directions exist
                     G_undir.edges[u, v][sum_attr] = G.edges[u, v][sum_attr] + G.edges[v, u][sum_attr]
@@ -514,8 +544,8 @@ def power_to_undirected(G):
 
     for u, v in G.edges():
         # Only if flow has already been calculated
-        if "flow" in G_undir.edges[u, v] and "flow_cap" in G_undir.edges[u, v]:
-            G_undir.edges[u, v]["pct_flow_cap"] = G_undir.edges[u, v]["flow"] / G_undir.edges[u, v]["flow_cap"]
+        if "flow" in G_undir.edges[u, v] and "flow_max" in G_undir.edges[u, v]:
+            G_undir.edges[u, v]["pct_flow_cap"] = G_undir.edges[u, v]["flow"] / G_undir.edges[u, v]["flow_max"]
 
     # TODO Run power_calc_centrality later on at each iteration of the simulation
 

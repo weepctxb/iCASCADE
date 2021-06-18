@@ -353,7 +353,8 @@ def create_power_ukpn_graph(gisnode, circuit, trans2w, trans3w, loads, geners, t
                            pos=(row["x"], row["y"]),
                            type="generator",
                            voltage=row["Connection Voltage kV"],
-                           Installed_Capacity=row["Installed Capacity MW"])
+                           Installed_Capacity=row["Installed Capacity MW"],
+                           Capacity_Factor=row["Capacity Factor"])
                 G.add_edge(gener_name, n, flow_cap=row["Installed Capacity MW"],
                            resistance=0,
                            conductance=200. * row["Installed Capacity MW"])
@@ -503,7 +504,10 @@ def flow_cen_calc_power_ukpn_graph(G):
     # and Assign baseline % capacity utilised
     for u, v in G.edges():
         G.edges[u, v]["flow"] = G.edges[u, v]["edge_current_flow_betweenness"]
-        G.edges[u, v]["pct_flow_cap"] = G.edges[u, v]["flow"] / G.edges[u, v]["flow_cap"]
+        G.edges[u, v]["flow_max"] = G.edges[u, v]["edge_current_flow_betweenness_max"]
+        # Compare with flow_max, which is the equivalent surrogate flow capacity measure
+        # Limitation: This ignores cable/line capacity
+        G.edges[u, v]["pct_flow_cap"] = G.edges[u, v]["flow"] / (G.edges[u, v]["flow_max"] + np.spacing(1.0))
 
     # P.U.2.3 Assign baseline node thruflows,
     # and Assign baseline % capacity utilised
@@ -512,7 +516,9 @@ def flow_cen_calc_power_ukpn_graph(G):
         successors = list(G.successors(n))
         G.nodes[n]["thruflow"] = max(sum([G.edges[p, n]["flow"] for p in predecessors]),
                                      sum([G.edges[n, s]["flow"] for s in successors]))
-        G.nodes[n]["pct_thruflow_cap"] = G.nodes[n]["thruflow"] / G.nodes[n]["thruflow_cap"]
+        G.nodes[n]["thruflow_max"] = max(sum([G.edges[p, n]["flow_max"] for p in predecessors]),
+                                         sum([G.edges[n, s]["flow_max"] for s in successors]))
+        G.nodes[n]["pct_thruflow_cap"] = G.nodes[n]["thruflow"] / (G.nodes[n]["thruflow_max"] + np.spacing(1.0)+ np.spacing(1.0))
 
     return G
 
@@ -536,18 +542,18 @@ def flow_check(G):
 
     # for u, v in G.edges():
     #     if G.edges[u, v]["flow"] == 0:
-    #         print("Link Warning - Zero Flow: ", u, v, G.edges[u, v]["flow"], G.edges[u, v]["flow_cap"])
-    #     elif G.edges[u, v]["flow_cap"] == 0:
-    #         print("Link Warning - Zero Capacity: ", u, v, G.edges[u, v]["flow"], G.edges[u, v]["flow_cap"])
-    #     elif G.edges[u, v]["flow"] > G.edges[u, v]["flow_cap"]:
-    #         print("Link Warning - Capacity Exceeded: ", u, v, G.edges[u, v]["flow"], G.edges[u, v]["flow_cap"])
+    #         print("Link Warning - Zero Flow: ", u, v, G.edges[u, v]["flow"], G.edges[u, v]["flow_max"])
+    #     elif G.edges[u, v]["flow_max"] == 0:
+    #         print("Link Warning - Zero Capacity: ", u, v, G.edges[u, v]["flow"], G.edges[u, v]["flow_max"])
+    #     elif G.edges[u, v]["flow"] > G.edges[u, v]["flow_max"]:
+    #         print("Link Warning - Capacity Exceeded: ", u, v, G.edges[u, v]["flow"], G.edges[u, v]["flow_max"])
     # for n in G.nodes():
     #     if G.nodes[n]["thruflow"] == 0:
-    #         print("Node Warning - Zero Thruflow: ", n, G.nodes[n]["thruflow"], G.nodes[n]["thruflow_cap"])
-    #     elif G.nodes[n]["thruflow_cap"] == 0:
-    #         print("Node Warning - Zero Capacity: ", n, G.nodes[n]["thruflow"], G.nodes[n]["thruflow_cap"])
-    #     elif G.nodes[n]["thruflow"] > G.nodes[n]["thruflow_cap"]:
-    #         print("Node Warning - Capacity Exceeded: ", n, G.nodes[n]["thruflow"], G.nodes[n]["thruflow_cap"])
+    #         print("Node Warning - Zero Thruflow: ", n, G.nodes[n]["thruflow"], G.nodes[n]["thruflow_max"])
+    #     elif G.nodes[n]["thruflow_max"] == 0:
+    #         print("Node Warning - Zero Capacity: ", n, G.nodes[n]["thruflow"], G.nodes[n]["thruflow_max"])
+    #     elif G.nodes[n]["thruflow"] > G.nodes[n]["thruflow_max"]:
+    #         print("Node Warning - Capacity Exceeded: ", n, G.nodes[n]["thruflow"], G.nodes[n]["thruflow_max"])
 
 
 if __name__ == "__main__":
@@ -595,7 +601,7 @@ if __name__ == "__main__":
     # P.U.6 Export graph edgelist
     try:
         edgelist = pd.DataFrame(columns=["From", "To",
-                                         "flow", "flow_cap", "pct_flow_cap",
+                                         "flow", "flow_cap", "flow_max", "pct_flow_cap",
                                          "edge_betweenness", "edge_current_flow_betweenness",
                                          # "resistance",
                                          "conductance"])
@@ -603,6 +609,7 @@ if __name__ == "__main__":
             series_obj = pd.Series([u, v,
                                     G_flow.edges[u, v].get("flow", "No Data"),
                                     G_flow.edges[u, v].get("flow_cap", "No Data"),
+                                    G_flow.edges[u, v].get("flow_max", "No Data"),
                                     G_flow.edges[u, v].get("pct_flow_cap", "No Data"),
                                     G_flow.edges[u, v].get("edge_betweenness", "No Data"),
                                     G_flow.edges[u, v].get("edge_current_flow_betweenness", "No Data"),

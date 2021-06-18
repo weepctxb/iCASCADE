@@ -187,7 +187,7 @@ def flow_cen_calc_transport_multiplex_graph(G, odmat):
     for u, v in G.edges():
         G.edges[u, v]["flow"] = (float(G.edges[u, v]["sp_flow"]) ** 0.64) * \
                                 (float(G.edges[u, v]["edge_current_flow_betweenness"]) ** 0.39)
-        G.edges[u, v]["pct_flow_cap"] = G.edges[u, v]["flow"] / G.edges[u, v]["flow_cap"]
+        G.edges[u, v]["pct_flow_cap"] = G.edges[u, v]["flow"] / (G.edges[u, v]["flow_cap"] + np.spacing(1.0))
 
     # T.M.2.1.3 Assign baseline node thruflows,
     #  and Assign baseline % capacity utilised
@@ -197,7 +197,7 @@ def flow_cen_calc_transport_multiplex_graph(G, odmat):
         successors = list(G.successors(n))
         G.nodes[n]["thruflow"] = max(G.nodes[n]["flow_in"] + sum([G.edges[p, n]["flow"] for p in predecessors]),
                                          G.nodes[n]["flow_out"] + sum([G.edges[n, s]["flow"] for s in successors]))
-        G.nodes[n]["pct_thruflow_cap"] = G.nodes[n]["thruflow"] / G.nodes[n]["thruflow_cap"]
+        G.nodes[n]["pct_thruflow_cap"] = G.nodes[n]["thruflow"] / (G.nodes[n]["thruflow_cap"] + np.spacing(1.0))
 
     return G
 
