@@ -1,6 +1,6 @@
 import json
 import pickle
-
+from datetime import datetime
 from dynamics import get_node, percolate_nodes, percolate_links, recompute_flows, fail_flow, fail_SI
 from util import parse_json
 
@@ -32,13 +32,14 @@ G[1], shortest_paths, failed_nodes[1], failed_links[1] = \
                     shortest_paths=shortest_paths)  # shortest_paths will be overwritten
 
 # Identify failures based on flow capacity or surges
-newly_failed_links_flow = fail_flow(G[1], G[0],
-                                    cap_lwr_threshold=0.9, cap_upp_threshold=1.0,
-                                    ratio_lwr_threshold=3.0, ratio_upp_threshold=4.0)  # 360, 400, 1.5, 2
+newly_failed_nodes_flow, newly_failed_links_flow = fail_flow(G[1], G[0],
+                                                             cap_lwr_threshold=0.9, cap_upp_threshold=1.0,
+                                                             ratio_lwr_threshold=3.0, ratio_upp_threshold=4.0)
+failed_nodes[1].extend(newly_failed_nodes_flow)
 failed_links[1].extend(newly_failed_links_flow)
 
 # Identify failures based on diffusion process # TODO Fail deterministically for interdependencies
-newly_failed_nodes_dif = fail_SI(G[1], G[0], infection_probability=0.05, recovery_probability=0.01)
+newly_failed_nodes_dif = fail_SI(G[1], G[0], infection_probability=0.2, recovery_probability=0.01)
 failed_nodes[1].extend(newly_failed_nodes_dif)
 
 # TODO TOO SLOW - try to remove centrality calculations, if not absolutely necessary!
@@ -59,15 +60,19 @@ for t in range(2, TIME_HORIZON):
                             shortest_paths=shortest_paths)  # shortest_paths will be overwritten
 
     # Identify failures based on flow capacity or surges
-    newly_failed_links_flow = fail_flow(G[t], G[t-1],
-                                        cap_lwr_threshold=0.9, cap_upp_threshold=1.0,
-                                        ratio_lwr_threshold=1.5, ratio_upp_threshold=2.0)
+    newly_failed_nodes_flow, newly_failed_links_flow = fail_flow(G[t], G[t-1],
+                                                                 cap_lwr_threshold=0.9, cap_upp_threshold=1.0,
+                                                                 ratio_lwr_threshold=3.0, ratio_upp_threshold=4.0)
+    failed_nodes[t].extend(newly_failed_nodes_flow)
     failed_links[t].extend(newly_failed_links_flow)
 
     # Identify failures based on diffusion process
     newly_failed_nodes_dif = fail_SI(G[t], G[t-1], infection_probability=0.2, recovery_probability=0.01)
     failed_nodes[t].extend(newly_failed_nodes_dif)
-    # TODO Fail interdependencies deterministically
+
+# Save the whole thing
+identifier = datetime.now().strftime("%m%d%Y_%H%M")
+pickle.dump(G, open(r'data/combined_network/infra_G_'+identifier+".pkl", 'wb+'))
 
 # TODO Criticality calculation
 # TODO Visualisation

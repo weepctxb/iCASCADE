@@ -347,17 +347,55 @@ def fail_flow(Gn, Gp, cap_lwr_threshold=0.9, cap_upp_threshold=1.5, ratio_lwr_th
                         print("Link", u, "-", v, "failed deterministically due to flow surge: ",
                               "surge ratio =", surge_ratio)
 
-    # TODO for nodes, fail stochastically if thruflows are close to or over capacity
-    # TODO if all incoming or all outoging links fail, node fails
+    newly_failed_nodes_flow = list()
+    # Fail stochastically if nodes are close to or over capacity
+    for n in Gn.nodes():
+        if Gn.nodes[n]["state"] == 1:
+            if cap_lwr_threshold <= Gn.nodes[n]["pct_thruflow_cap"] < cap_upp_threshold:
+                p = (Gn.nodes[n]["pct_thruflow_cap"] - cap_lwr_threshold) / (cap_upp_threshold - cap_lwr_threshold)
+                if random.random() <= p:
+                    newly_failed_nodes_flow.append(n)
+                    print("Node", n, "failed stochastically due to thruflow being close to capacity :",
+                          "thruflow =", Gn.nodes[n]["thruflow"], "pct_thruflow_cap =", Gn.nodes[n]["pct_thruflow_cap"],
+                          "p =", p)
+            elif Gn.nodes[n]["pct_thruflow_cap"] >= cap_upp_threshold:
+                newly_failed_nodes_flow.append(n)
+                print("Node", n, "failed deterministically due to thruflow being over capacity :",
+                      "thruflow =", Gn.nodes[n]["thruflow"], "pct_thruflow_cap =", Gn.nodes[n]["pct_thruflow_cap"])
+    # Otherwise, Fail stochastically if there are thruflow surges
+    for n in Gn.nodes():
+        if Gn.nodes[n]["state"] == 1:
+            if Gp.nodes[n]["state"] == 1:
+                surge_ratio = Gn.nodes[n]["thruflow"] / (Gp.nodes[n]["thruflow"] + np.spacing(1.0))
+                if ratio_lwr_threshold <= surge_ratio < ratio_upp_threshold:
+                    p = (surge_ratio - ratio_lwr_threshold) / (ratio_upp_threshold - ratio_lwr_threshold)
+                    if random.random() <= p:
+                        newly_failed_nodes_flow.append(n)
+                        print("Node", n, "failed stochastically due to thruflow surge: ",
+                              "surge ratio =", surge_ratio, "p =", p)
+                elif surge_ratio >= ratio_upp_threshold:
+                    newly_failed_nodes_flow.append(n)
+                    print("Node", n, "failed deterministically due to thruflow surge: ",
+                          "surge ratio =", surge_ratio)
 
-    return newly_failed_links_flow
+    return newly_failed_nodes_flow, newly_failed_links_flow
 
 
 def fail_SI(Gn, Gp, infection_probability=0.05, recovery_probability=0.01):
     newly_failed_nodes_dif = list()
     for n in Gn.nodes():
-        if Gn.nodes[n]["state"] == 1:
+        if Gn.nodes[n]["state"] == 1:  # If node is working
             neighbours = set([p for p in Gn.predecessors(n)] + [s for s in Gn.successors(n)])
+            # All diffusions across physical_interdepedencies are deterministic
+            for ne in neighbours:
+                if ne in Gn.nodes[n]:
+                    if Gn.edges[n, ne]["network"] == "physical_interdependency":
+                        newly_failed_nodes_dif.append(ne)
+                        print("Node", n, "failed deterministically due to interdependency with", ne)
+                elif n in Gn.nodes[ne]:
+                    if Gn.edges[ne, n]["network"] == "physical_interdependency":
+                        newly_failed_nodes_dif.append(ne)
+                        print("Node", n, "failed deterministically due to interdependency with", ne)
             failed_ne = [ne for ne in neighbours if Gn.nodes[ne]["state"] == 0]
             if len(failed_ne) > 0:  # only if there are neighbours
                 p = 1. - (1. - infection_probability) ** len(failed_ne)  # assuming parallel hazards
