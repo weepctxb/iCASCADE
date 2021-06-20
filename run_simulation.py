@@ -39,7 +39,7 @@ failed_nodes[1].extend(newly_failed_nodes_flow)
 failed_links[1].extend(newly_failed_links_flow)
 
 # Identify failures based on diffusion process # TODO Fail deterministically for interdependencies
-newly_failed_nodes_dif = fail_SI(G[1], G[0], infection_probability=0.2, recovery_probability=0.01)
+newly_failed_nodes_dif = fail_SI(G[1], infection_probability=0.2, recovery_probability=0.01)
 failed_nodes[1].extend(newly_failed_nodes_dif)
 
 # TODO TOO SLOW - try to remove centrality calculations, if not absolutely necessary!
@@ -67,12 +67,13 @@ for t in range(2, TIME_HORIZON):
     failed_links[t].extend(newly_failed_links_flow)
 
     # Identify failures based on diffusion process
-    newly_failed_nodes_dif = fail_SI(G[t], G[t-1], infection_probability=0.2, recovery_probability=0.01)
+    newly_failed_nodes_dif = fail_SI(G[t], infection_probability=0.2, recovery_probability=0.01)
     failed_nodes[t].extend(newly_failed_nodes_dif)
 
 # Save the whole thing
-identifier = datetime.now().strftime("%m%d%Y_%H%M")
-pickle.dump(G, open(r'data/combined_network/infra_G_'+identifier+".pkl", 'wb+'))
+id1 = str(failed_nodes[0])
+id2 = datetime.now().strftime("%m%d%Y_%H%M")
+pickle.dump(G, open(r'data/combined_network/infra_dynG_'+id1+"_"+id2+".pkl", 'wb+'))
 
 # TODO Criticality calculation
 # TODO Visualisation

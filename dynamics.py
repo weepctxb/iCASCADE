@@ -381,7 +381,7 @@ def fail_flow(Gn, Gp, cap_lwr_threshold=0.9, cap_upp_threshold=1.5, ratio_lwr_th
     return newly_failed_nodes_flow, newly_failed_links_flow
 
 
-def fail_SI(Gn, Gp, infection_probability=0.05, recovery_probability=0.01):
+def fail_SI(Gn, infection_probability=0.05, recovery_probability=0.01):
     newly_failed_nodes_dif = list()
     for n in Gn.nodes():
         if Gn.nodes[n]["state"] == 1:  # If node is working
