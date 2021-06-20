@@ -5,7 +5,7 @@ import copy
 from math import radians, cos, sin, asin, sqrt
 import matplotlib.pyplot as plt
 
-from globalparams import POWER_LINE_PP_EPS
+from globalparams import POWER_LINE_PP_EPS, TRAIN_DUR_THRESHOLD_MIN
 
 
 def hex_to_rgb(value):
@@ -123,6 +123,100 @@ def weakly_connected_component_subgraphs(G, copy=True):
             yield G.subgraph(comp)
 
 
+def populate_shortest_paths(G, odmat):
+    """Populate shortest paths for train network"""
+
+    shortest_paths = dict()
+    for s in G.nodes():
+        # FYI Things to catch:
+        #  - Excessively long shortest paths (above cutoff TRAIN_DUR_THRESHOLD_MIN)
+        #  - Origin node no longer exists (have to catch outside loop)
+        #  - Destination node no longer exists (have to catch outside loop)
+        #  - No path exists (have to catch outside loop)
+        if s not in shortest_paths:
+            shortest_paths[s] = dict()
+        travel_time, path = nx.single_source_dijkstra(G, source=s,
+                                                      cutoff=TRAIN_DUR_THRESHOLD_MIN,
+                                                      weight='running_time_min')
+        for t in G.nodes():
+            if s != t:
+                if t not in shortest_paths[s]:
+                    shortest_paths[s][t] = dict()
+                try:
+                    shortest_paths[s][t]["path"] = path[t]
+                    # shortest_paths[s][t]["path_names"] = [G.nodes[n]["nodeLabel"] for n in
+                    #                                       shortest_paths[s][t]["path"]]
+                    shortest_paths[s][t]["travel_time"] = travel_time[t]
+                    shortest_paths[s][t]["length"] = len(shortest_paths[s][t]["path"])
+                except KeyError:  # Excessively long shortest paths (above cutoff TRAIN_DUR_THRESHOLD_MIN)
+                    shortest_paths[s][t]["path"] = None
+                    # shortest_paths[s][t]["path_names"] = None
+                    shortest_paths[s][t]["travel_time"] = np.inf
+                    shortest_paths[s][t]["length"] = np.inf
+    for s in shortest_paths:
+        # PATCH - keys in json are in strings for some reason (JSON encoder issue)
+        snlc = G.nodes[int(s)]["NLC"]
+        for t in shortest_paths[s]:
+            tnlc = G.nodes[int(t)]["NLC"]
+            odmat_filtered = odmat.loc[odmat["mnlc_o"] == snlc]
+            odmat_filtered = odmat_filtered.loc[odmat["mnlc_d"] == tnlc]
+            flow_st = sum(odmat_filtered["od_tb_3_perhour"])
+            shortest_paths[s][t]["flow"] = flow_st
+
+    return shortest_paths
+
+
+def populate_shortest_paths_skele(G, odmat):
+    """Populate shortest paths for skeletonised train network"""
+
+    shortest_paths = dict()
+    for s in G.nodes():
+        # FYI Things to catch:
+        #  - Excessively long shortest paths (above cutoff TRAIN_DUR_THRESHOLD_MIN)
+        #  - Origin node no longer exists (have to catch outside loop)
+        #  - Destination node no longer exists (have to catch outside loop)
+        #  - No path exists (have to catch outside loop)
+        if s not in shortest_paths:
+            shortest_paths[s] = dict()
+        travel_time, path = nx.single_source_dijkstra(G, source=s,
+                                                      cutoff=TRAIN_DUR_THRESHOLD_MIN,
+                                                      weight='running_time_min')
+        for t in G.nodes():
+            if s != t:
+                if t not in shortest_paths[s]:
+                    shortest_paths[s][t] = dict()
+                try:
+                    shortest_paths[s][t]["path"] = path[t]
+                    # shortest_paths[s][t]["path_names"] = [G.nodes[n]["nodeLabel"] for n in
+                    #                                       shortest_paths[s][t]["path"]]
+                    shortest_paths[s][t]["travel_time"] = travel_time[t]
+                    shortest_paths[s][t]["length"] = len(shortest_paths[s][t]["path"])
+                except KeyError:  # Excessively long shortest paths (above cutoff TRAIN_DUR_THRESHOLD_MIN)
+                    shortest_paths[s][t]["path"] = None
+                    # shortest_paths[s][t]["path_names"] = None
+                    shortest_paths[s][t]["travel_time"] = np.inf
+                    shortest_paths[s][t]["length"] = np.inf
+    for s in shortest_paths:
+        for t in shortest_paths[s]:
+            shortest_paths[s][t]["flow"] = 0.
+        # PATCH - keys in json are in strings for some reason (JSON encoder issue)
+        s_list = s.split("-") if isinstance(s, str) else [s]
+        snlc = G.nodes[s]["NLC"]
+        snlc_list = snlc.split("-") if isinstance(s, str) else [snlc]
+        for s_, snlc_ in zip(s_list, snlc_list):
+            for t in shortest_paths[s]:
+                t_list = t.split("-") if isinstance(t, str) else [t]
+                tnlc = G.nodes[t]["NLC"]
+                tnlc_list = tnlc.split("-") if isinstance(t, str) else [tnlc]
+                for t_, tnlc_ in zip(t_list, tnlc_list):
+                    odmat_filtered = odmat.loc[odmat["mnlc_o"] == int(snlc_)]
+                    odmat_filtered = odmat_filtered.loc[odmat["mnlc_d"] == int(tnlc_)]
+                    flow_st = sum(odmat_filtered["od_tb_3_perhour"])
+                    shortest_paths[s][t]["flow"] += flow_st
+
+    return shortest_paths
+
+
 def linear_cluster(G, nodes_to_cluster):
     # Nomenclature: (rest of network-x)-a-b-c-(y-rest of network)
 
@@ -168,6 +262,7 @@ def linear_cluster(G, nodes_to_cluster):
                                      sum([G1.edges[n1, n2]["running_time_min"]
                                           for n1, n2 in zip(nodes_to_cluster[:-1], nodes_to_cluster[1:])]) / 2,
                     flow=G1.edges[nleft, nodes_to_cluster[0]]["flow"],
+                    sp_flow=G1.edges[nleft, nodes_to_cluster[0]]["sp_flow"],
                     # flow_capscal=G1.edges[nleft, nodes_to_cluster[0]]["flow_capscal"],
                     flow_cap=G1.edges[nleft, nodes_to_cluster[0]]["flow_cap"],
                     pct_flow_cap=G1.edges[nleft, nodes_to_cluster[0]]["flow"] /
@@ -184,6 +279,7 @@ def linear_cluster(G, nodes_to_cluster):
                                      sum([G1.edges[n1, n2]["running_time_min"]
                                           for n1, n2 in zip(nodes_to_cluster[:-1], nodes_to_cluster[1:])]) / 2,
                     flow=G1.edges[nodes_to_cluster[0], nleft]["flow"],
+                    sp_flow=G1.edges[nodes_to_cluster[0], nleft]["sp_flow"],
                     # flow_capscal=G1.edges[nodes_to_cluster[0], nleft]["flow_capscal"],
                     flow_cap=G1.edges[nodes_to_cluster[0], nleft]["flow_cap"],
                     pct_flow_cap=G1.edges[nodes_to_cluster[0], nleft]["flow"] /
@@ -201,6 +297,7 @@ def linear_cluster(G, nodes_to_cluster):
                                      sum([G1.edges[n1, n2]["running_time_min"]
                                           for n1, n2 in zip(nodes_to_cluster[:-1], nodes_to_cluster[1:])]) / 2,
                     flow=G1.edges[nodes_to_cluster[-1], nright]["flow"],
+                    sp_flow=G1.edges[nodes_to_cluster[-1], nright]["sp_flow"],
                     # flow_capscal=G1.edges[nodes_to_cluster[-1], nright]["flow_capscal"],
                     flow_cap=G1.edges[nodes_to_cluster[-1], nright]["flow_cap"],
                     pct_flow_cap=G1.edges[nodes_to_cluster[-1], nright]["flow"] /
@@ -217,6 +314,7 @@ def linear_cluster(G, nodes_to_cluster):
                                      sum([G1.edges[n1, n2]["running_time_min"]
                                           for n1, n2 in zip(nodes_to_cluster[:-1], nodes_to_cluster[1:])]) / 2,
                     flow=G1.edges[nright, nodes_to_cluster[-1]]["flow"],
+                    sp_flow=G1.edges[nright, nodes_to_cluster[-1]]["sp_flow"],
                     # flow_capscal=G1.edges[nright, nodes_to_cluster[-1]]["flow_capscal"],
                     flow_cap=G1.edges[nright, nodes_to_cluster[-1]]["flow_cap"],
                     pct_flow_cap=G1.edges[nright, nodes_to_cluster[-1]]["flow"] /
@@ -250,8 +348,10 @@ def transport_calc_centrality(G):
 
         # Do NOT normalise because network may break up into disconnected components -
         #  but surrogate flows can still be estimated
-        cfb.update(nx.current_flow_betweenness_centrality(
-            subG_undir, normalized=False, weight="recip_running_time_min"))
+        # cfb.update(nx.current_flow_betweenness_centrality(
+        #     subG_undir, normalized=False, weight="recip_running_time_min"))
+        cfb.update(nx.approximate_current_flow_betweenness_centrality(
+            subG_undir, normalized=False, weight="recip_running_time_min", epsilon=0.5, kmax=10000))
 
         eb.update(nx.edge_betweenness_centrality(subG, normalized=True, weight="running_time_min"))
 
@@ -416,93 +516,103 @@ def power_calc_centrality(G):
     return G
 
 
-def custom_ecfb(G, sources, targets, normalized=True, weight=None, dtype=float, solver="lu", max=False):
+def custom_ecfb(G, sources, targets, normalized=True, weight=None, dtype=float, solver="lu", max=False, mode="slow"):
     """Custom implementation of nx.edge_current_flow_betweenness_centrality_subset"""
 
-    from networkx.utils import reverse_cuthill_mckee_ordering
-    from networkx.algorithms.centrality.flow_matrix import flow_matrix_row
+    if mode == "slow":
 
-    if not nx.is_connected(G):
-        raise nx.NetworkXError("Graph not connected.")
-    n = G.number_of_nodes()
-    ordering = list(reverse_cuthill_mckee_ordering(G))
-    # make a copy with integer labels according to rcm ordering
-    # this could be done without a copy if we really wanted to
-    mapping = dict(zip(ordering, range(n)))
-    H = nx.relabel_nodes(G, mapping)
-    edges = (tuple(sorted((u, v))) for u, v in H.edges())
-    betweenness = dict.fromkeys(edges, 0.0)
-    if normalized:
-        nb = (n - 1.0) * (n - 2.0)  # normalization factor
+        from networkx.utils import reverse_cuthill_mckee_ordering
+        from networkx.algorithms.centrality.flow_matrix import flow_matrix_row
+
+        if not nx.is_connected(G):
+            raise nx.NetworkXError("Graph not connected.")
+        n = G.number_of_nodes()
+        ordering = list(reverse_cuthill_mckee_ordering(G))
+        # make a copy with integer labels according to rcm ordering
+        # this could be done without a copy if we really wanted to
+        mapping = dict(zip(ordering, range(n)))
+        H = nx.relabel_nodes(G, mapping)
+        edges = (tuple(sorted((u, v))) for u, v in H.edges())
+        betweenness = dict.fromkeys(edges, 0.0)
+        if normalized:
+            nb = (n - 1.0) * (n - 2.0)  # normalization factor
+        else:
+            nb = 2.0
+        for row, (e) in flow_matrix_row(H, weight=weight, dtype=dtype, solver=solver):
+            for ss in sources:
+                i = mapping[ss]
+                for tt in targets:
+                    j = mapping[tt]
+                    if max:  # generator at nameplate capacity, transmission GSP at max, substation at maximum demand
+                        betweenness[e] += 0.5 * np.abs(row[i] - row[j]) * \
+                                          sqrt(G.nodes[ss]["thruflow_cap"] * G.nodes[tt]["thruflow_cap"])
+                    else:  # generator at average capacity, transmission GSP at max, substation at average demand
+                        betweenness[e] += 0.5 * np.abs(row[i] - row[j]) * \
+                                          sqrt(G.nodes[ss]["thruflow_cap"] * \
+                                               (G.nodes[ss]["Capacity_Factor"]
+                                                if G.nodes[ss]["type"] == "generator" else 1.) * \
+                                               G.nodes[tt]["thruflow_cap"] * \
+                                               (1 + G.nodes[tt]["Minimum_Load_Scaling_Factor_winter"]) / 2)
+            betweenness[e] /= nb
+        return {(ordering[s], ordering[t]): v for (s, t), v in betweenness.items()}
+
     else:
-        nb = 2.0
-    for row, (e) in flow_matrix_row(H, weight=weight, dtype=dtype, solver=solver):
-        for ss in sources:
-            i = mapping[ss]
-            for tt in targets:
-                j = mapping[tt]
-                if max:  # generator at nameplate capacity, transmission GSP at max, substation at maximum demand
-                    betweenness[e] += 0.5 * np.abs(row[i] - row[j]) * \
-                                      sqrt(G.nodes[ss]["thruflow_cap"] * G.nodes[tt]["thruflow_cap"])
-                else:  # generator at average capacity, transmission GSP at max, substation at average demand
-                    betweenness[e] += 0.5 * np.abs(row[i] - row[j]) * \
-                                      sqrt(G.nodes[ss]["thruflow_cap"] * \
-                                           (G.nodes[ss]["Capacity_Factor"]
-                                            if G.nodes[ss]["type"] == "generator" else 1.) * \
-                                           G.nodes[tt]["thruflow_cap"] * \
-                                           (1 + G.nodes[tt]["Minimum_Load_Scaling_Factor_winter"]) / 2)
-        betweenness[e] /= nb
-    return {(ordering[s], ordering[t]): v for (s, t), v in betweenness.items()}
+        raise NotImplementedError
 
 
-def custom_cfb(G, sources, targets, normalized=True, weight=None, dtype=float, solver="lu", max=False):
+def custom_cfb(G, sources, targets, normalized=True, weight=None, dtype=float, solver="lu", max=False, mode="slow"):
     """Custom implementation of nx.current_flow_betweenness_centrality_subset"""
 
-    from networkx.utils import reverse_cuthill_mckee_ordering
-    from networkx.algorithms.centrality.flow_matrix import flow_matrix_row
+    if mode == "slow":
 
-    if not nx.is_connected(G):
-        raise nx.NetworkXError("Graph not connected.")
-    n = G.number_of_nodes()
-    ordering = list(reverse_cuthill_mckee_ordering(G))
-    # make a copy with integer labels according to rcm ordering
-    # this could be done without a copy if we really wanted to
-    mapping = dict(zip(ordering, range(n)))
-    H = nx.relabel_nodes(G, mapping)
-    betweenness = dict.fromkeys(H, 0.0)  # b[v]=0 for v in H
-    for row, (s, t) in flow_matrix_row(H, weight=weight, dtype=dtype, solver=solver):
-        for ss in sources:
-            i = mapping[ss]
-            for tt in targets:
-                j = mapping[tt]
-                if max:  # generator at nameplate capacity, transmission GSP at max, substation at maximum demand
-                    betweenness[s] += 0.5 * np.abs(row[i] - row[j]) * \
-                                      sqrt(G.nodes[ss]["thruflow_cap"] * G.nodes[tt]["thruflow_cap"])
-                    betweenness[t] += 0.5 * np.abs(row[i] - row[j]) * \
-                                      sqrt(G.nodes[ss]["thruflow_cap"] * G.nodes[tt]["thruflow_cap"])
-                else:  # generator at average capacity, transmission GSP at max, substation at average demand
-                    betweenness[s] += 0.5 * np.abs(row[i] - row[j]) * \
-                                      sqrt(G.nodes[ss]["thruflow_cap"] *
-                                           (G.nodes[ss]["Capacity_Factor"]
-                                            if G.nodes[ss]["type"] == "generator" else 1.) * \
-                                           G.nodes[tt]["thruflow_cap"] * \
-                                           (1 + G.nodes[tt]["Minimum_Load_Scaling_Factor_winter"]) / 2)
-                    betweenness[t] += 0.5 * np.abs(row[i] - row[j]) * \
-                                      sqrt(G.nodes[ss]["thruflow_cap"] *
-                                           (G.nodes[ss]["Capacity_Factor"]
-                                            if G.nodes[ss]["type"] == "generator" else 1.) * \
-                                           G.nodes[tt]["thruflow_cap"] * \
-                                           (1 + G.nodes[tt]["Minimum_Load_Scaling_Factor_winter"]) / 2)
-    if normalized:
-        nb = (n - 1.0) * (n - 2.0)  # normalization factor
+        from networkx.utils import reverse_cuthill_mckee_ordering
+        from networkx.algorithms.centrality.flow_matrix import flow_matrix_row
+
+        if not nx.is_connected(G):
+            raise nx.NetworkXError("Graph not connected.")
+        n = G.number_of_nodes()
+        ordering = list(reverse_cuthill_mckee_ordering(G))
+        # make a copy with integer labels according to rcm ordering
+        # this could be done without a copy if we really wanted to
+        mapping = dict(zip(ordering, range(n)))
+        H = nx.relabel_nodes(G, mapping)
+        betweenness = dict.fromkeys(H, 0.0)  # b[v]=0 for v in H
+        for row, (s, t) in flow_matrix_row(H, weight=weight, dtype=dtype, solver=solver):
+            for ss in sources:
+                i = mapping[ss]
+                for tt in targets:
+                    j = mapping[tt]
+                    if max:  # generator at nameplate capacity, transmission GSP at max, substation at maximum demand
+                        betweenness[s] += 0.5 * np.abs(row[i] - row[j]) * \
+                                          sqrt(G.nodes[ss]["thruflow_cap"] * G.nodes[tt]["thruflow_cap"])
+                        betweenness[t] += 0.5 * np.abs(row[i] - row[j]) * \
+                                          sqrt(G.nodes[ss]["thruflow_cap"] * G.nodes[tt]["thruflow_cap"])
+                    else:  # generator at average capacity, transmission GSP at max, substation at average demand
+                        betweenness[s] += 0.5 * np.abs(row[i] - row[j]) * \
+                                          sqrt(G.nodes[ss]["thruflow_cap"] *
+                                               (G.nodes[ss]["Capacity_Factor"]
+                                                if G.nodes[ss]["type"] == "generator" else 1.) * \
+                                               G.nodes[tt]["thruflow_cap"] * \
+                                               (1 + G.nodes[tt]["Minimum_Load_Scaling_Factor_winter"]) / 2)
+                        betweenness[t] += 0.5 * np.abs(row[i] - row[j]) * \
+                                          sqrt(G.nodes[ss]["thruflow_cap"] *
+                                               (G.nodes[ss]["Capacity_Factor"]
+                                                if G.nodes[ss]["type"] == "generator" else 1.) * \
+                                               G.nodes[tt]["thruflow_cap"] * \
+                                               (1 + G.nodes[tt]["Minimum_Load_Scaling_Factor_winter"]) / 2)
+        if normalized:
+            nb = (n - 1.0) * (n - 2.0)  # normalization factor
+        else:
+            nb = 2.0
+        for v in H:
+            if n > 2:  # PATCH
+                betweenness[v] = betweenness[v] / nb + 1.0 / (2 - n)
+            elif n == 2:  # PATCH
+                betweenness[v] = betweenness[v] / nb
+        return {ordering[k]: v for k, v in betweenness.items()}
+
     else:
-        nb = 2.0
-    for v in H:
-        if n > 2:  # PATCH
-            betweenness[v] = betweenness[v] / nb + 1.0 / (2 - n)
-        elif n == 2:  # PATCH
-            betweenness[v] = betweenness[v] / nb
-    return {ordering[k]: v for k, v in betweenness.items()}
+        raise NotImplementedError
 
 
 def power_to_undirected(G):

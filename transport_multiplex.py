@@ -7,7 +7,8 @@ import json
 import numpy as np
 
 from globalparams import TRANSPORT_COLORS, TRAIN_DUR_THRESHOLD_MIN
-from util import linear_cluster, transport_calc_centrality, transport_to_undirected
+from util import linear_cluster, transport_calc_centrality, transport_to_undirected, populate_shortest_paths, \
+    populate_shortest_paths_skele
 
 
 # T.M.1.1 Load nodes and edges data
@@ -131,42 +132,7 @@ def flow_cen_calc_transport_multiplex_graph(G, odmat):
         with open(r'data/transport_multiplex/flow/shortest_paths.json', 'r') as json_file:
             shortest_paths = json.load(json_file)
     except (FileNotFoundError, json.decoder.JSONDecodeError) as e:
-        shortest_paths = dict()
-        for s in G.nodes():
-            # FYI Things to catch:
-            #  - Excessively long shortest paths (above cutoff TRAIN_DUR_THRESHOLD_MIN)
-            #  - Origin node no longer exists (have to catch outside loop)
-            #  - Destination node no longer exists (have to catch outside loop)
-            #  - No path exists (have to catch outside loop)
-            if s not in shortest_paths:
-                shortest_paths[s] = dict()
-            travel_time, path = nx.single_source_dijkstra(G, source=s,
-                                                          cutoff=TRAIN_DUR_THRESHOLD_MIN,
-                                                          weight='running_time_min')
-            for t in G.nodes():
-                if s != t:
-                    if t not in shortest_paths[s]:
-                        shortest_paths[s][t] = dict()
-                    try:
-                        shortest_paths[s][t]["path"] = path[t]
-                        # shortest_paths[s][t]["path_names"] = [G.nodes[n]["nodeLabel"] for n in
-                        #                                       shortest_paths[s][t]["path"]]
-                        shortest_paths[s][t]["travel_time"] = travel_time[t]
-                        shortest_paths[s][t]["length"] = len(shortest_paths[s][t]["path"])
-                    except KeyError:  # Excessively long shortest paths (above cutoff TRAIN_DUR_THRESHOLD_MIN)
-                        shortest_paths[s][t]["path"] = None
-                        # shortest_paths[s][t]["path_names"] = None
-                        shortest_paths[s][t]["travel_time"] = np.inf
-                        shortest_paths[s][t]["length"] = np.inf
-        for s in shortest_paths:
-            # PATCH - keys in json are in strings for some reason (JSON encoder issue)
-            snlc = G.nodes[int(s)]["NLC"]
-            for t in shortest_paths[s]:
-                tnlc = G.nodes[int(t)]["NLC"]
-                odmat_filtered = odmat.loc[odmat["mnlc_o"] == snlc]
-                odmat_filtered = odmat_filtered.loc[odmat["mnlc_d"] == tnlc]
-                flow_st = sum(odmat_filtered["od_tb_3_perhour"])
-                shortest_paths[s][t]["flow"] = flow_st
+        shortest_paths = populate_shortest_paths(G, odmat)
         with open(r'data/transport_multiplex/flow/shortest_paths.json', 'w') as json_file:
             json.dump(shortest_paths, json_file)  # indent=2, cls=util.CustomEncoder
 
@@ -292,11 +258,16 @@ if __name__ == "__main__":
         G_skele = simplify_transport_multiplex_graph(G_flow)
         G_skele = simplify_transport_multiplex_graph(G_skele)  # Run it again!
         G_skele = transport_calc_centrality(G_skele)
+        if odmat is None:
+            odmat = pd.read_pickle("data/transport_multiplex/in/transport_multiplex_odmat.pkl")
+        shortest_paths_skele = populate_shortest_paths_skele(G_skele, odmat)
         # Beyond this the graph can no longer be further simplified using the current rules
         try:
             pickle.dump(G_skele, open(r'data/transport_multiplex/out/transport_multiplex_G_flow_skele.pkl', 'wb+'))
         except FileNotFoundError as e:
             print(e)
+        with open(r'data/transport_multiplex/flow/shortest_paths_skele.json', 'w') as json_file:
+            json.dump(shortest_paths_skele, json_file)  # indent=2, cls=util.CustomEncoder
 
     # T.M.5 Export graph nodelist
     try:

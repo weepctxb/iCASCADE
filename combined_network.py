@@ -7,10 +7,15 @@ import numpy as np
 # FYI Under Environment Variables, add ETS_TOOLKIT = qt4
 
 # Load individual networks
-from globalparams import TRANSPORT_COLORS, POWER_COLORS
+from globalparams import TRANSPORT_COLORS, POWER_COLORS, TRANSPORT_COLORS_MINI, POWER_COLORS_MINI
 from util import hex_to_rgb
 
-G_transport = pickle.load(open(r'data/transport_multiplex/out/transport_multiplex_G_flow.pkl', "rb"))
+SIMPLIFIED = True
+
+if SIMPLIFIED:
+    G_transport = pickle.load(open(r'data/transport_multiplex/out/transport_multiplex_G_flow_skele.pkl', "rb"))
+else:
+    G_transport = pickle.load(open(r'data/transport_multiplex/out/transport_multiplex_G_flow.pkl', "rb"))
 G_power = pickle.load(open(r'data/power_ukpn/out/power_ukpn_G_flow.pkl', "rb"))
 
 # Extend coordinate systems of individual networks into 3D
@@ -43,11 +48,18 @@ G_infra = nx.compose(G_transport, G_power)
 # Load interdependencies
 physical_intdep = pd.read_excel("data/interdependencies/physical.xlsx", sheet_name="physical", header=0)
 for index, row in physical_intdep.iterrows():
-    G_infra.add_edge(row["UKPN_substation"], row["Train_multiplex_ID"],
-                     network="physical_interdependency", state=1)
+    if SIMPLIFIED:
+        G_infra.add_edge(row["UKPN_substation"], row["Train_simpl_ID"],
+                         network="physical_interdependency", state=1)
+    else:
+        G_infra.add_edge(row["UKPN_substation"], row["Train_multiplex_ID"],
+                         network="physical_interdependency", state=1)
 
 # Save combined network
-pickle.dump(G_infra, open(r'data/combined_network/infra_G.pkl', 'wb+'))
+if SIMPLIFIED:
+    pickle.dump(G_infra, open(r'data/combined_network/infra_G_skele.pkl', 'wb+'))
+else:
+    pickle.dump(G_infra, open(r'data/combined_network/infra_G.pkl', 'wb+'))
 
 # Plot combined network
 # network_plot_3D(G_infra, 120)
@@ -59,15 +71,15 @@ xyz = np.array([G_infra_renum.nodes[n]["pos"] for n in sorted(G_infra_renum)])
 mlab.figure(1)
 mlab.clf()
 node_scalars = np.array(list(G_infra_renum.nodes()))
-node_colors = np.array([hex_to_rgb(TRANSPORT_COLORS.get(G_infra_renum.nodes[n]["line"], "#FF0000"))
+node_colors = np.array([hex_to_rgb(TRANSPORT_COLORS_MINI.get(G_infra_renum.nodes[n]["line"], "#0009AB"))
                if G_infra_renum.nodes[n]["network"] == "transport"
-               else hex_to_rgb(POWER_COLORS.get(G_infra_renum.nodes[n]["type"], "#000000"))
+               else hex_to_rgb(POWER_COLORS_MINI.get(G_infra_renum.nodes[n]["type"], "#000000"))
                for n in G_infra_renum.nodes()])
 edge_scalars = np.array(list(G_infra_renum.edges()))
 edge_lines = nx.get_edge_attributes(G_infra_renum, "Line")
-edge_colors = np.array([hex_to_rgb(TRANSPORT_COLORS.get(edge_lines[u, v], "#808080"))
+edge_colors = np.array([hex_to_rgb(TRANSPORT_COLORS_MINI.get(edge_lines[u, v], "#0033CC"))
                if G_infra_renum.edges[u, v]["network"] == "transport"
-               else hex_to_rgb(POWER_COLORS.get("cable", "#000000"))
+               else hex_to_rgb(POWER_COLORS_MINI.get("cable", "#000000"))
                for u, v in G_infra_renum.edges()])
 pts = mlab.points3d(xyz[:, 0], xyz[:, 1], xyz[:, 2],
                     node_scalars,
