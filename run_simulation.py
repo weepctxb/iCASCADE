@@ -4,76 +4,132 @@ from datetime import datetime
 from dynamics import get_node, percolate_nodes, percolate_links, recompute_flows, fail_flow, fail_SI
 from util import parse_json
 
-# Retrieve shortest paths for transport network
-with open(r'data/transport_multiplex/flow/shortest_paths.json', 'r') as json_file:
-    shortest_paths = json.load(json_file)
-shortest_paths = parse_json(shortest_paths)
 
-# Load original network, create temporal network, initialise time horizon and initialise failed nodes and links
-G_original = pickle.load(open(r'data/combined_network/infra_G.pkl', "rb"))
-G = [G_original]
-TIME_HORIZON = 10
-failed_nodes = {t: list() for t in range(TIME_HORIZON)}
-failed_links = {t: list() for t in range(TIME_HORIZON)}
+def run_simulation(simplified=True, time_horizon=10,
+                   network="transport", mode="degree", top=1, override=None,
+                   cap_lwr_threshold=0.9, cap_upp_threshold=1.0,
+                   ratio_lwr_threshold=3.0, ratio_upp_threshold=4.0,
+                   infection_probability=0.2, recovery_probability=0.0):
 
-# Specify initial failure scenario
-print("ITERATION 1")
-# failed_nodes[0], _ = get_node(G[0], network="transport", mode="degree", top=1)
-# failed_nodes[0] = ["Kingsway 11kV Gen"]
-failed_nodes[0] = [0]
+    # Create log
+    id = datetime.now().strftime("%m%d%Y_%H%M")
+    # sys.stdout = open(r'data/combined_network/infra_dynG_' + id + ".log", 'w')
+    print("SETTINGS")
+    print("simplified:", simplified)
+    print("time_horizon:", time_horizon)
+    if override is not None:
+        print("override:", override)
+    else:
+        print("network:", network)
+        print("mode:", mode)
+        print("top:", top)
+    print("cap_lwr_threshold:", cap_lwr_threshold)
+    print("cap_upp_threshold:", cap_upp_threshold)
+    print("ratio_lwr_threshold:", ratio_lwr_threshold)
+    print("ratio_upp_threshold:", ratio_upp_threshold)
+    print("infection_probability:", infection_probability)
+    print("recovery_probability:", recovery_probability)
 
-# Percolate failed nodes & links
-Gn, failed_links[0] = percolate_nodes(G[0], failed_nodes=failed_nodes[0])
-G.append(Gn)
+    # Initialisation
+    failed_nodes = {t: list() for t in range(time_horizon)}
+    failed_links = {t: list() for t in range(time_horizon)}
+    shortest_paths = {t: dict() for t in range(time_horizon)}
 
-# Recompute flows
-G[1], shortest_paths, failed_nodes[1], failed_links[1] = \
-    recompute_flows(G[1], newly_failed_nodes=failed_nodes[0], newly_failed_links=failed_links[0],
-                    shortest_paths=shortest_paths)  # shortest_paths will be overwritten
+    # Retrieve shortest paths for transport network
+    if simplified:
+        with open(r'data/transport_multiplex/flow/shortest_paths_skele.json', 'r') as json_file:
+            shortest_paths = json.load(json_file)
+    else:
+        with open(r'data/transport_multiplex/flow/shortest_paths.json', 'r') as json_file:
+            shortest_paths = json.load(json_file)
+    shortest_paths[0] = parse_json(shortest_paths)
 
-# Identify failures based on flow capacity or surges
-newly_failed_nodes_flow, newly_failed_links_flow = fail_flow(G[1], G[0],
-                                                             cap_lwr_threshold=0.9, cap_upp_threshold=1.0,
-                                                             ratio_lwr_threshold=3.0, ratio_upp_threshold=4.0)
-failed_nodes[1].extend(newly_failed_nodes_flow)
-failed_links[1].extend(newly_failed_links_flow)
+    # Load original network, create temporal network, initialise time horizon and initialise failed nodes and links
+    if simplified:
+        G_original = pickle.load(open(r'data/combined_network/infra_G_skele.pkl', "rb"))
+    else:
+        G_original = pickle.load(open(r'data/combined_network/infra_G.pkl', "rb"))
+    G = [G_original]
 
-# Identify failures based on diffusion process # TODO Fail deterministically for interdependencies
-newly_failed_nodes_dif = fail_SI(G[1], infection_probability=0.2, recovery_probability=0.01)
-failed_nodes[1].extend(newly_failed_nodes_dif)
-
-# TODO TOO SLOW - try to remove centrality calculations, if not absolutely necessary!
-
-for t in range(2, TIME_HORIZON):
-    print("ITERATION", t)
+    # Specify initial failure scenario
+    print("ITERATION 1")
+    if override is not None:
+        failed_nodes[0] = override
+    else:
+        failed_nodes[0], _ = get_node(G[0], network=network, mode=mode, top=top)
+    # failed_nodes[0] = ["Kingsway 11kV Gen"]
+    # failed_nodes[0] = [0]
 
     # Percolate failed nodes & links
-    Gn, bydef_failed_links = percolate_nodes(G[t-1], failed_nodes=failed_nodes[t-1])
-    failed_links[t - 1].extend(bydef_failed_links)
-    Gn = percolate_links(Gn, failed_links=failed_links[t-1])
+    Gn, failed_links[0] = percolate_nodes(G[0], failed_nodes=failed_nodes[0])
     G.append(Gn)
 
-    # Recompute flows, only if topology changed
-    if len(failed_nodes[t-1]) > 0 and len(failed_links[t-1]) > 0:
-        G[t], shortest_paths, failed_nodes[t], failed_links[t] = \
-            recompute_flows(G[t], newly_failed_nodes=failed_nodes[t-1], newly_failed_links=failed_links[t-1],
-                            shortest_paths=shortest_paths)  # shortest_paths will be overwritten
+    # Recompute flows
+    G[1], shortest_paths[1], failed_nodes[1], failed_links[1] = \
+        recompute_flows(G[1], newly_failed_nodes=failed_nodes[0], newly_failed_links=failed_links[0],
+                        shortest_paths=shortest_paths[0])
 
     # Identify failures based on flow capacity or surges
-    newly_failed_nodes_flow, newly_failed_links_flow = fail_flow(G[t], G[t-1],
-                                                                 cap_lwr_threshold=0.9, cap_upp_threshold=1.0,
-                                                                 ratio_lwr_threshold=3.0, ratio_upp_threshold=4.0)
-    failed_nodes[t].extend(newly_failed_nodes_flow)
-    failed_links[t].extend(newly_failed_links_flow)
+    newly_failed_nodes_flow, newly_failed_links_flow = \
+        fail_flow(G[1], G[0],
+                  cap_lwr_threshold=cap_lwr_threshold, cap_upp_threshold=cap_upp_threshold,
+                  ratio_lwr_threshold=ratio_lwr_threshold, ratio_upp_threshold=ratio_upp_threshold)
+    failed_nodes[1].extend(newly_failed_nodes_flow)
+    failed_links[1].extend(newly_failed_links_flow)
 
-    # Identify failures based on diffusion process
-    newly_failed_nodes_dif = fail_SI(G[t], infection_probability=0.2, recovery_probability=0.01)
-    failed_nodes[t].extend(newly_failed_nodes_dif)
+    # Identify failures based on diffusion process # TODO Fail deterministically for interdependencies
+    newly_failed_nodes_dif = fail_SI(G[1],
+                                     infection_probability=infection_probability,
+                                     recovery_probability=recovery_probability)
+    failed_nodes[1].extend(newly_failed_nodes_dif)
 
-# Save the whole thing
-id1 = str(failed_nodes[0])
-id2 = datetime.now().strftime("%m%d%Y_%H%M")
-pickle.dump(G, open(r'data/combined_network/infra_dynG_'+id1+"_"+id2+".pkl", 'wb+'))
+    # TODO TOO SLOW - try to remove centrality calculations, if not absolutely necessary!
 
-# TODO Criticality calculation
-# TODO Visualisation
+    for t in range(2, time_horizon):
+        print("ITERATION", t)
+
+        # Percolate failed nodes & links
+        Gn, bydef_failed_links = percolate_nodes(G[t-1], failed_nodes=failed_nodes[t-1])
+        failed_links[t-1].extend(bydef_failed_links)
+        Gn = percolate_links(Gn, failed_links=failed_links[t-1])
+        G.append(Gn)
+
+        # Recompute flows, only if topology changed
+        # TODO can we speed up by skipping this for minor changes in topology OR alternate iterations?
+        if len(failed_nodes[t-1]) > 0 and len(failed_links[t-1]) > 0:
+            G[t], shortest_paths[t], failed_nodes[t], failed_links[t] = \
+                recompute_flows(G[t], newly_failed_nodes=failed_nodes[t-1], newly_failed_links=failed_links[t-1],
+                                shortest_paths=shortest_paths[t-1])  # shortest_paths will be overwritten
+
+        # Identify failures based on flow capacity or surges
+        newly_failed_nodes_flow, newly_failed_links_flow = \
+            fail_flow(G[t], G[t-1],
+                      cap_lwr_threshold=cap_lwr_threshold, cap_upp_threshold=cap_upp_threshold,
+                      ratio_lwr_threshold=ratio_lwr_threshold, ratio_upp_threshold=ratio_upp_threshold)
+        failed_nodes[t].extend(newly_failed_nodes_flow)
+        failed_links[t].extend(newly_failed_links_flow)
+
+        # Identify failures based on diffusion process
+        newly_failed_nodes_dif = fail_SI(G[t],
+                                         infection_probability=infection_probability,
+                                         recovery_probability=recovery_probability)
+        failed_nodes[t].extend(newly_failed_nodes_dif)
+
+    # Last iteration
+    # Percolate failed nodes & links
+    Gn, bydef_failed_links = percolate_nodes(G[time_horizon-1], failed_nodes=failed_nodes[time_horizon-1])
+    failed_links[time_horizon-1].extend(bydef_failed_links)
+    Gn = percolate_links(Gn, failed_links=failed_links[time_horizon-1])
+    G.append(Gn)
+
+    # Save the whole thing
+    pickle.dump(G, open(r'data/combined_network/infra_dynG_'+id+".pkl", 'wb+'))
+    pickle.dump(shortest_paths, open(r'data/combined_network/shortest_paths_'+id+".pkl", 'wb+'))
+
+
+if __name__ == "__main__":
+    run_simulation(simplified=True, time_horizon=3,
+                   network="power", mode="degree", top=1, override=[100],
+                   cap_lwr_threshold=0.9, cap_upp_threshold=1.0,
+                   ratio_lwr_threshold=3.0, ratio_upp_threshold=4.0,
+                   infection_probability=0.2, recovery_probability=0.0)
