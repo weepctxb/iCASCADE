@@ -110,6 +110,7 @@ def percolate_nodes(g, failed_nodes):
     for fn in failed_nodes:
         assert fn in list(G.nodes())
         G.nodes[fn]["state"] = 0
+        # This will also include physical interdependencies actually
         if G.is_directed():  # Also fail all links adjacent to fn to ensure a closed network
             for su in G.successors(fn):
                 G.edges[fn, su]["state"] = 0
@@ -155,11 +156,15 @@ def recompute_flows(G, newly_failed_nodes, newly_failed_links, shortest_paths):
     Gf = filter_functional_network(G)
 
     # Split the transport and power parts of the FILTERED network
-    GT = G.subgraph([n for n in Gf.nodes() if Gf.nodes[n]["network"] == "transport"]).copy()
-    GP = G.subgraph([n for n in Gf.nodes() if Gf.nodes[n]["network"] == "power"]).copy()
+    GT = Gf.subgraph([n for n in Gf.nodes() if Gf.nodes[n]["network"] == "transport"]).copy()
+    GP = Gf.subgraph([n for n in Gf.nodes() if Gf.nodes[n]["network"] == "power"]).copy()
 
     # Create new copy of overall network
     new_G = G.copy()
+
+    # Initialise list of nodes and links to subsequently fail
+    subseq_failed_nodes = list()
+    subseq_failed_links = list()
 
     # TRANSPORT NETWORK RECOMPUTATION
 
@@ -221,14 +226,23 @@ def recompute_flows(G, newly_failed_nodes, newly_failed_links, shortest_paths):
                 new_G.edges[u, v]["sp_flow"] += new_shortest_paths[s][t]["flow"]
 
     for subGT in weakly_connected_component_subgraphs(GT, copy=True):
-        subGT = transport_calc_centrality(subGT)
-        for n in subGT.nodes():
-            new_G.nodes[n]["betweenness"] = subGT.nodes[n]["betweenness"]
-            new_G.nodes[n]["closeness"] = subGT.nodes[n]["closeness"]
-            new_G.nodes[n]["current_flow_betweenness"] = subGT.nodes[n]["current_flow_betweenness"]
-        for u, v in subGT.edges():
-            new_G.edges[u, v]["edge_betweenness"] = subGT.edges[u, v]["edge_betweenness"]
-            new_G.edges[u, v]["edge_current_flow_betweenness"] = subGT.edges[u, v]["edge_current_flow_betweenness"]
+        if subGT.number_of_nodes() <= 2:
+            # Fail all subnetworks with <= 2 stations
+            for n in subGT.nodes():
+                subseq_failed_nodes.append(n)
+                print("Node", n, "failed deterministically due to subnetwork collapse")
+            for u, v in subGT.edges():
+                subseq_failed_links.append((u, v))
+                print("Link", u, "-", v, "failed deterministically due to subnetwork collapse")
+        else:
+            subGT = transport_calc_centrality(subGT)
+            for n in subGT.nodes():
+                new_G.nodes[n]["betweenness"] = subGT.nodes[n]["betweenness"]
+                new_G.nodes[n]["closeness"] = subGT.nodes[n]["closeness"]
+                new_G.nodes[n]["current_flow_betweenness"] = subGT.nodes[n]["current_flow_betweenness"]
+            for u, v in subGT.edges():
+                new_G.edges[u, v]["edge_betweenness"] = subGT.edges[u, v]["edge_betweenness"]
+                new_G.edges[u, v]["edge_current_flow_betweenness"] = subGT.edges[u, v]["edge_current_flow_betweenness"]
 
     # Combine into hybrid measure for link flow,
     #  and Assign baseline % capacity utilised
@@ -249,8 +263,6 @@ def recompute_flows(G, newly_failed_nodes, newly_failed_links, shortest_paths):
         new_G.nodes[n]["pct_thruflow_cap"] = new_G.nodes[n]["thruflow"] / (new_G.nodes[n]["thruflow_cap"] + np.spacing(1.0))
 
     # POWER NETWORK RECOMPUTATION
-    subseq_failed_nodes = list()
-    subseq_failed_links = list()
 
     if not nx.is_weakly_connected(GP):
         for subGP in weakly_connected_component_subgraphs(GP, copy=True):
@@ -303,7 +315,7 @@ def recompute_flows(G, newly_failed_nodes, newly_failed_links, shortest_paths):
 
 
 def filter_functional_network(G):
-    """Returns a deepcopied functinal subnetwork of the overall network"""
+    """Returns a deepcopied functional subnetwork of the overall network"""
     return G.subgraph([n for n in G.nodes() if G.nodes[n]["state"] == 1]).copy()
 
 
@@ -331,21 +343,21 @@ def fail_flow(Gn, Gp, cap_lwr_threshold=0.9, cap_upp_threshold=1.5, ratio_lwr_th
                           "flow =", Gn.edges[u, v]["flow"], "pct_flow_cap =", Gn.edges[u, v]["pct_flow_cap"])
     # Otherwise, Fail stochastically if there are flow surges
     for u, v in Gn.edges():
-        if Gn.edges[u, v]["network"] != "physical_interdependency":
+        if Gn.edges[u, v]["network"] != "physical_interdependency":  # Ignore physical interdependencies
             assert (u, v) in Gp.edges()
             if Gn.edges[u, v]["state"] == 1:
-                if Gp.edges[u, v]["state"] == 1:
+                if Gp.edges[u, v]["state"] == 1 and Gp.edges[u, v]["flow"] > 0.:
                     surge_ratio = Gn.edges[u, v]["flow"] / (Gp.edges[u, v]["flow"] + np.spacing(1.0))
                     if ratio_lwr_threshold <= surge_ratio < ratio_upp_threshold:
                         p = (surge_ratio - ratio_lwr_threshold) / (ratio_upp_threshold - ratio_lwr_threshold)
                         if random.random() <= p:
                             newly_failed_links_flow.append((u, v))
                             print("Link", u, "-", v, "failed stochastically due to flow surge: ",
-                                  "surge ratio =", surge_ratio,"p =", p)
+                                  "surge ratio =", surge_ratio, "=", Gn.edges[u, v]["flow"], "/", Gp.edges[u, v]["flow"], "p =", p)
                     elif surge_ratio >= ratio_upp_threshold:
                         newly_failed_links_flow.append((u, v))
                         print("Link", u, "-", v, "failed deterministically due to flow surge: ",
-                              "surge ratio =", surge_ratio)
+                              "surge ratio =", surge_ratio, "=", Gn.edges[u, v]["flow"], "/", Gp.edges[u, v]["flow"])
 
     newly_failed_nodes_flow = list()
     # Fail stochastically if nodes are close to or over capacity
@@ -365,18 +377,20 @@ def fail_flow(Gn, Gp, cap_lwr_threshold=0.9, cap_upp_threshold=1.5, ratio_lwr_th
     # Otherwise, Fail stochastically if there are thruflow surges
     for n in Gn.nodes():
         if Gn.nodes[n]["state"] == 1:
-            if Gp.nodes[n]["state"] == 1:
+            if Gp.nodes[n]["state"] == 1 and Gp.nodes[n]["thruflow"] > 0.:
                 surge_ratio = Gn.nodes[n]["thruflow"] / (Gp.nodes[n]["thruflow"] + np.spacing(1.0))
                 if ratio_lwr_threshold <= surge_ratio < ratio_upp_threshold:
                     p = (surge_ratio - ratio_lwr_threshold) / (ratio_upp_threshold - ratio_lwr_threshold)
                     if random.random() <= p:
                         newly_failed_nodes_flow.append(n)
                         print("Node", n, "failed stochastically due to thruflow surge: ",
-                              "surge ratio =", surge_ratio, "p =", p)
+                              "surge ratio =", surge_ratio,
+                              "=", Gn.nodes[n]["thruflow"], "/", Gp.nodes[n]["thruflow"], "p =", p)
                 elif surge_ratio >= ratio_upp_threshold:
                     newly_failed_nodes_flow.append(n)
                     print("Node", n, "failed deterministically due to thruflow surge: ",
-                          "surge ratio =", surge_ratio)
+                          "surge ratio =", surge_ratio,
+                          "=", Gn.nodes[n]["thruflow"], "/", Gp.nodes[n]["thruflow"])
 
     return newly_failed_nodes_flow, newly_failed_links_flow
 
