@@ -151,8 +151,9 @@ def flow_cen_calc_transport_multiplex_graph(G, odmat):
     # T.M.2.1.4 Combine into hybrid measure for link flow,
     #  and Assign baseline % capacity utilised
     for u, v in G.edges():
-        G.edges[u, v]["flow"] = (float(G.edges[u, v]["sp_flow"]) ** 0.64) * \
-                                (float(G.edges[u, v]["edge_current_flow_betweenness"]) ** 0.39)
+        # G.edges[u, v]["flow"] = (float(G.edges[u, v]["sp_flow"]) ** 0.64) * \
+        #                         (float(G.edges[u, v]["edge_current_flow_betweenness"]) ** 0.39)
+        G.edges[u, v]["flow"] = G.edges[u, v]["sp_flow"]
         G.edges[u, v]["pct_flow_cap"] = G.edges[u, v]["flow"] / (G.edges[u, v]["flow_cap"] + np.spacing(1.0))
 
     # T.M.2.1.3 Assign baseline node thruflows,
