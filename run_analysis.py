@@ -8,6 +8,7 @@ from dynamics import filter_functional_network
 from globalparams import STATE_COLORS
 from util import weakly_connected_component_subgraphs
 
+# Augment code to support combined plotting of multiple runs
 G = pickle.load(open('data/combined_network/cobourg_example/infra_dynG_06212021_1440_[\'Cobourg Street Electricity Substation\'].pkl', "rb"))
 
 with open('data/combined_network/cobourg_example/shortest_paths_06212021_1440_[\'Cobourg Street Electricity Substation\'].json', 'rb') as json_file:
