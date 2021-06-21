@@ -233,7 +233,7 @@ def linear_cluster(G, nodes_to_cluster):
                 interchange=False,
                 line="-".join(np.unique([G1.nodes[n]["line"] for n in nodes_to_cluster])),
                 NLC="-".join([str(G1.nodes[n]["NLC"]) for n in nodes_to_cluster]),
-                railway="station",
+                type="station",
                 flow_in=sum([G1.nodes[n]["flow_in"] for n in nodes_to_cluster]),
                 flow_out=sum([G1.nodes[n]["flow_out"] for n in nodes_to_cluster]),
                 thruflow=G1.edges[nb_left[-1], nodes_to_cluster[0]]["flow"] +
@@ -348,10 +348,12 @@ def transport_calc_centrality(G):
 
         # Do NOT normalise because network may break up into disconnected components -
         #  but surrogate flows can still be estimated
+
         # cfb.update(nx.current_flow_betweenness_centrality(
         #     subG_undir, normalized=False, weight="recip_running_time_min"))
-        cfb.update(nx.approximate_current_flow_betweenness_centrality(
-            subG_undir, normalized=False, weight="recip_running_time_min", epsilon=0.5, kmax=10000))
+        # PATCH SKIP
+        # cfb.update(nx.approximate_current_flow_betweenness_centrality(
+        #     subG_undir, normalized=False, weight="recip_running_time_min", epsilon=0.5, kmax=10000))
 
         eb.update(nx.edge_betweenness_centrality(subG, normalized=True, weight="running_time_min"))
 
@@ -362,7 +364,8 @@ def transport_calc_centrality(G):
 
     nx.set_node_attributes(G, bb, 'betweenness')
     nx.set_node_attributes(G, cc, 'closeness')
-    nx.set_node_attributes(G, cfb, 'current_flow_betweenness')
+    # PATCH SKIP
+    # nx.set_node_attributes(G, cfb, 'current_flow_betweenness')
 
     nx.set_edge_attributes(G, eb, 'edge_betweenness')
     for u, v in G.edges():
@@ -480,13 +483,15 @@ def power_calc_centrality(G):
     for subG in weakly_connected_component_subgraphs(G, copy=True):
         subG_undir = power_to_undirected(subG)
 
-        cfb.update(custom_cfb(
-            subG_undir, normalized=False, weight="conductance",
-            sources=source_nodes, targets=target_nodes, solver="full", max=False))
+        # PATCH SKIP
+        # cfb.update(custom_cfb(
+        #     subG_undir, normalized=False, weight="conductance",
+        #     sources=source_nodes, targets=target_nodes, solver="full", max=False))
 
-        cfb_max.update(custom_cfb(
-            subG_undir, normalized=False, weight="conductance",
-            sources=source_nodes, targets=target_nodes, solver="full", max=True))
+        # PATCH SKIP
+        # cfb_max.update(custom_cfb(
+        #     subG_undir, normalized=False, weight="conductance",
+        #     sources=source_nodes, targets=target_nodes, solver="full", max=True))
 
         eb.update(nx.edge_betweenness_centrality(subG, normalized=True, weight="resistance"))
 
@@ -498,8 +503,9 @@ def power_calc_centrality(G):
             subG_undir, normalized=False, weight="conductance",
             sources=source_nodes, targets=target_nodes, solver="full", max=True))
 
-    nx.set_node_attributes(G, cfb, 'current_flow_betweenness')
-    nx.set_node_attributes(G, cfb_max, 'current_flow_betweenness_max')
+    # PATCH SKIP
+    # nx.set_node_attributes(G, cfb, 'current_flow_betweenness')
+    # nx.set_node_attributes(G, cfb_max, 'current_flow_betweenness_max')
 
     nx.set_edge_attributes(G, eb, 'edge_betweenness')
     for u, v in G.edges():
