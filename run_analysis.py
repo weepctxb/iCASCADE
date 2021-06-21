@@ -1,5 +1,6 @@
 import json
 import pickle
+import numpy as np
 import networkx as nx
 import matplotlib.pyplot as plt
 
@@ -7,43 +8,119 @@ from dynamics import filter_functional_network
 from globalparams import STATE_COLORS
 from util import weakly_connected_component_subgraphs
 
-G = pickle.load(open(r'data/combined_network/infra_dynG_[219]_06202021_1629.pkl', "rb"))
-# G = pickle.load(open(r'data/combined_network/infra_dynG_06202021_1824.pkl', "rb"))
+G = pickle.load(open('data/combined_network/cobourg_example/infra_dynG_06212021_1440_[\'Cobourg Street Electricity Substation\'].pkl', "rb"))
 
-nodes_failed = list()
-links_failed = list()
+with open('data/combined_network/cobourg_example/shortest_paths_06212021_1440_[\'Cobourg Street Electricity Substation\'].json', 'rb') as json_file:
+    shortest_paths = json.load(json_file)
+
+nodes_t_functional = list()
+nodes_p_functional = list()
+links_t_functional = list()
+links_p_functional = list()
 num_t_sub = list()
 size_t_sub = list()
 num_p_sub = list()
 size_p_sub = list()
+wei_avg_time = list()
+fulfilled_trips = list()
+unfulfilled_trips = list()
+unfulfilled_power_demand = list()
 
 for i in range(len(G)):
-    print("ITERATION", i)
-    nodes_failed.append(len([n for n in G[i].nodes() if G[i].nodes[n]["state"] == 0]))
-    print("Nodes failed:", nodes_failed[-1])
-    links_failed.append(len([(u, v) for (u, v) in G[i].edges() if G[i].edges[u, v]["state"] == 0]))
-    print("Links failed:", links_failed[-1])
-
+    # Track functional nodes & links
     Gf = filter_functional_network(G[i])
     GT = Gf.subgraph([n for n in Gf.nodes() if Gf.nodes[n]["network"] == "transport"]).copy()
     GP = Gf.subgraph([n for n in Gf.nodes() if Gf.nodes[n]["network"] == "power"]).copy()
+    nodes_t_functional.append(len(GT.nodes()))
+    nodes_p_functional.append(len(GP.nodes()))
+    links_t_functional.append(len(GT.edges()))
+    links_p_functional.append(len(GP.edges()))
 
+    # Track functional components & GCC size
     num_t_sub.append(len([subG for subG in weakly_connected_component_subgraphs(GT, copy=True)]))
-    print("Transport subnetworks: ", num_t_sub[-1])
     size_t_sub.append([len(subG) for subG in weakly_connected_component_subgraphs(GT, copy=True)])
-    print("Transport subnetworks sizes: ", size_t_sub[-1])
     num_p_sub.append(len([subG for subG in weakly_connected_component_subgraphs(GP, copy=True)]))
-    print("Power subnetworks: ", num_p_sub[-1])
     size_p_sub.append([len(subG) for subG in weakly_connected_component_subgraphs(GP, copy=True)])
-    print("Power subnetworks sizes: ", size_p_sub[-1])
 
-f, axs = plt.subplots(2, 2, figsize=(6, 6))
-axs[0, 0].plot(range(len(G)), nodes_failed)
-axs[0, 1].plot(range(len(G)), links_failed)
-axs[1, 0].plot(range(len(G)), num_t_sub)
-axs[1, 1].plot(range(len(G)), num_p_sub)
+    # Track unfulfilled power demand
+    ud = 0.
+    for n in G[i].nodes():
+        if G[i].nodes[n].get("type", None) in ["load"]:
+            if G[i].nodes[n]["state"] == 0:
+                ud += G[i].nodes[n]["thruflow"]
+    unfulfilled_power_demand.append(ud)
+
+# Track weighted avg. time and unfulfilled trips
+for i in range(len(shortest_paths)):  # FYI len(shortest_paths) = len(G) - 1
+    i_ = str(i)  # PATCH - keys in json are in strings for some reason (JSON encoder issue)
+    numer = 0.
+    denom = 0.
+    tft = 0.
+    for s in shortest_paths[str(len(shortest_paths) - 1)]:
+        for t in shortest_paths[str(len(shortest_paths) - 1)][s]:
+            if shortest_paths[str(len(shortest_paths) - 1)][s][t]["travel_time"] not in [np.inf, np.nan] \
+                    and shortest_paths[str(len(shortest_paths) - 1)][s][t]["flow"] > 0.:
+                numer += shortest_paths[i_][s][t]["travel_time"] * shortest_paths[i_][s][t]["flow"]
+                denom += shortest_paths[i_][s][t]["flow"]
+    for s in shortest_paths[i_]:
+        for t in shortest_paths[i_][s]:
+            if shortest_paths[i_][s][t]["travel_time"] not in [np.inf, np.nan] \
+                    and shortest_paths[i_][s][t]["flow"] > 0.:
+                tft += shortest_paths[i_][s][t]["flow"]
+    wei_avg_time.append(numer / denom)
+    fulfilled_trips.append(tft)
+    unfulfilled_trips.append(fulfilled_trips[0] - tft)
+
+for i in range(len(G)):
+    print("ITERATION", i)
+    print("Nodes failed:", "Transport:", nodes_t_functional[i], "Power:", nodes_p_functional[i])
+    print("Links failed:", "Transport:", links_t_functional[i], "Power:", links_p_functional[i])
+    print("Transport subnetworks: ", num_t_sub[i])
+    print("Transport subnetworks sizes: ", size_t_sub[i])
+    print("Power subnetworks: ", num_p_sub[i])
+    print("Power subnetworks sizes: ", size_p_sub[i])
+
+    if i < len(G) - 1:
+        print("Weighted average time:", wei_avg_time[i])
+        print("Total unfulfilled trips:", unfulfilled_trips[i])
+        print("Total unfulfilled power demand:", unfulfilled_power_demand[i])
+
+# Plot results
+f, axs = plt.subplots(3, 2, figsize=(6, 4))
+
+# axs[0, 0].plot(range(len(G)), np.array(nodes_t_functional) + np.array(nodes_p_functional))
+axs[0, 0].plot(range(len(G)), nodes_t_functional, range(len(G)), nodes_p_functional)
+axs[0, 0].set_xlabel("Iteration")
+axs[0, 0].set_ylabel("Functional\nnodes")
+axs[0, 0].legend(["Transport", "Power"])
+
+# axs[0, 1].plot(range(len(G)), np.array(links_t_functional) + np.array(links_p_functional))
+axs[0, 1].plot(range(len(G)), links_t_functional, range(len(G)), links_p_functional)
+axs[0, 1].set_xlabel("Iteration")
+axs[0, 1].set_ylabel("Functional\nlinks")
+axs[0, 1].legend(["Transport", "Power"])
+
+axs[1, 0].plot(range(len(G)), num_t_sub, range(len(G)), num_p_sub)
+axs[1, 0].set_xlabel("Iteration")
+axs[1, 0].set_ylabel("Functional\nconnected components")
+axs[1, 0].legend(["Transport", "Power"])
+
+axs[1, 1].plot(range(len(G)), [max(s) for s in size_t_sub], range(len(G)), [max(s) for s in size_p_sub])
+axs[1, 1].set_xlabel("Iteration")
+axs[1, 1].set_ylabel("Giant connected\ncomponent size")
+axs[1, 1].legend(["Transport", "Power"])
+
+axs[2, 0].plot(range(len(G) - 1), unfulfilled_trips)
+axs[2, 0].set_xlabel("Iteration")
+axs[2, 0].set_ylabel("Unfulfilled\ntrips")
+
+axs[2, 1].plot(range(len(G)), unfulfilled_power_demand)
+axs[2, 1].set_xlabel("Iteration")
+axs[2, 1].set_ylabel("Unfulfilled\npower demand [MW]")
+
 plt.show()
 
+# Plot networks to show failure propagation
 for i in range(len(G)):
     Gi_undir = G[i].to_undirected()
     GT = Gi_undir.subgraph([n for n in Gi_undir.nodes() if Gi_undir.nodes[n]["network"] == "transport"]).copy()
@@ -57,34 +134,4 @@ for i in range(len(G)):
                 node_color=node_colors, edge_color=edge_colors)
     # plt.savefig("data/combined_network/infra_dynG_06202021_1824_"+str(i)+".png")
     # plt.savefig("data/combined_network/infra_dynG_06202021_1824_"+str(i)+".svg")
-    # plt.show()
-
-# Track weighted average travel duration + Unfulfilled trips
-# with open(r'data/transport_multiplex/flow/shortest_paths_skele.json', 'r') as json_file:
-#     shortest_paths = [json.load(json_file)]
-shortest_paths = pickle.load(open(r'data/combined_network/shortest_paths_id.pkl', 'wb+'))
-wei_avg_time = list()
-fulfilled_flows = list()
-for i in range(len(shortest_paths)):
-    numer = 0.
-    denom = 0.
-    tff = 0.
-    for s in shortest_paths[i]:
-        for t in shortest_paths[i][s]:
-            numer += shortest_paths[i][s][t]["travel_time"] * shortest_paths[i][s][t]["flow"]
-            denom += shortest_paths[i][s][t]["flow"]
-            tff += shortest_paths[i][s][t]["flow"]
-    wei_avg_time.append(numer / denom)
-    fulfilled_flows.append(tff)
-    print("Weighted average time:", wei_avg_time[-1])
-    print("Total fulfilled flows:", fulfilled_flows[-1])
-    # TODO Track total unfulfilled trips
-
-# Track unfulfilled demand
-unfulfilled_demand = list()
-for i in range(len(G)):
-    ud = 0.
-    for n in G[i].nodes():
-        if G[i].nodes[n]["state"] == 0 and G.nodes[n]["type"] in ["load"]:
-            ud += G[i].nodes[n]["thruflow"]
-    unfulfilled_demand.append(ud)
+    plt.show()
