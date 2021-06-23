@@ -312,38 +312,11 @@ def create_power_ukpn_graph(gisnode, circuit, trans2w, trans3w, loads, geners, t
     G = nx.compose(G_c, nx.compose(G_t2, G_t3))
     G.remove_edges_from(nx.selfloop_edges(G))  # Remove self-loops
 
-    # P.U.1.2.4 Create graph from edges dataframe - loads
-    # Summer & Winter
-    loads_summer = loads.loc[loads["Season"] == "Summer"]
-    loads_winter = loads.loc[loads["Season"] == "Winter"]
-    G_nodes_list = list(G.nodes())  # To avoid nodes list changing size during iteration
-    for arg1, arg2 in zip(loads_summer.iterrows(), loads_winter.iterrows()):
-        row_s = arg1[1]
-        row_w = arg2[1]
-        for n in G_nodes_list:  # To avoid nodes list changing size during iteration
-            if n == row_s["Substation"]:
-                load_name = str(row_s["Substation"]) + " Load"
-                # FYI This new node is the load with the full substation name, not the node ID!
-                G.add_node(load_name,
-                           pos=(row_s["x"], row_s["y"]),
-                           type="load",
-                           voltage=G.nodes[row_s["Substation"]]["voltage"],
-                           Maximum_Demand_1920_MW_summer=row_s["Maximum Demand 19/20 MW"],
-                           Maximum_Demand_1920_PF_summer=row_s["Maximum Demand 19/20 PF"],
-                           Firm_Capacity_MW_summer=row_s["Firm Capacity MW"],
-                           Minimum_Load_Scaling_Factor_summer=row_s["Minimum Load Scaling Factor %"],
-                           Maximum_Demand_1920_MW_winter=row_w["Maximum Demand 19/20 MW"],
-                           Maximum_Demand_1920_PF_winter=row_w["Maximum Demand 19/20 PF"],
-                           Firm_Capacity_MW_winter=row_w["Firm Capacity MW"] / row_w["Maximum Demand 19/20 PF"],
-                           Minimum_Load_Scaling_Factor_winter=row_w["Minimum Load Scaling Factor %"])
-                G.add_edge(n, load_name, flow_cap=row_w["Firm Capacity MW"] / row_w["Maximum Demand 19/20 PF"],
-                           resistance=0,
-                           conductance=200. * row_w["Firm Capacity MW"] / row_w["Maximum Demand 19/20 PF"])
-
     # P.U.1.2.5 Create graph from edges dataframe - generators
     # TODO Capacity factors?
     geners = geners.loc[geners["Connected / Accepted"] == "Connected"]  # only consider connected generators
     geners = geners.loc[geners["Installed Capacity MW"] >= 1.]  # only consider generators above 1 MW
+    G_nodes_list = list(G.nodes())  # To avoid nodes list changing size during iteration
     for index, row in geners.iterrows():
         for n in G_nodes_list:  # To avoid nodes list changing size during iteration
             if n == row["Substation"]:
@@ -457,6 +430,35 @@ def create_power_ukpn_graph(gisnode, circuit, trans2w, trans3w, loads, geners, t
     G_txt.remove_edges_from(nx.selfloop_edges(G_txt))  # Remove self-loops
 
     G = nx.compose(G, nx.compose(G_txc, G_txt))  # Add transmission network into G
+
+    # P.U.1.2.4 Create graph from edges dataframe - loads
+    # Summer & Winter
+    loads_summer = loads.loc[loads["Season"] == "Summer"]
+    loads_winter = loads.loc[loads["Season"] == "Winter"]
+    G_nodes_list = list(G.nodes())  # To avoid nodes list changing size during iteration
+    for arg1, arg2 in zip(loads_summer.iterrows(), loads_winter.iterrows()):
+        row_s = arg1[1]
+        row_w = arg2[1]
+        for n in G_nodes_list:  # To avoid nodes list changing size during iteration
+            if n == row_s["Substation"]:
+                load_name = str(row_s["Substation"]) + " Load"
+                # FYI This new node is the load with the full substation name, not the node ID!
+                G.add_node(load_name,
+                           pos=(row_s["x"], row_s["y"]),
+                           type="load",
+                           voltage=G.nodes[row_s["Substation"]]["voltage"],
+                           Maximum_Demand_1920_MW_summer=row_s["Maximum Demand 19/20 MW"],
+                           Maximum_Demand_1920_PF_summer=row_s["Maximum Demand 19/20 PF"],
+                           Firm_Capacity_MW_summer=row_s["Firm Capacity MW"],
+                           Minimum_Load_Scaling_Factor_summer=row_s["Minimum Load Scaling Factor %"],
+                           Maximum_Demand_1920_MW_winter=row_w["Maximum Demand 19/20 MW"],
+                           Maximum_Demand_1920_PF_winter=row_w["Maximum Demand 19/20 PF"],
+                           Firm_Capacity_MW_winter=row_w["Firm Capacity MW"] / row_w["Maximum Demand 19/20 PF"],
+                           Minimum_Load_Scaling_Factor_winter=row_w["Minimum Load Scaling Factor %"])
+                G.add_edge(n, load_name, flow_cap=row_w["Firm Capacity MW"] / row_w["Maximum Demand 19/20 PF"],
+                           resistance=0,
+                           conductance=200. * row_w["Firm Capacity MW"] / row_w["Maximum Demand 19/20 PF"])
+
     G.remove_edges_from(nx.selfloop_edges(G))  # Remove self-loops
 
     # P.U.1.2.9 Assign node thruflow capacities
