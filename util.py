@@ -329,7 +329,7 @@ def linear_cluster(G, nodes_to_cluster):
     return G1
 
 
-def transport_calc_centrality(G):
+def transport_calc_centrality(G, skip=False):
     """Calculate and assign transport network centralities by running time"""
     assert G.is_directed()
 
@@ -343,36 +343,34 @@ def transport_calc_centrality(G):
         subG_undir = transport_to_undirected(subG)
 
         bb.update(nx.betweenness_centrality(subG, normalized=True, weight="running_time_min"))
-
         cc.update(nx.closeness_centrality(subG, distance="running_time_min"))
+        eb.update(nx.edge_betweenness_centrality(subG, normalized=True, weight="running_time_min"))
 
         # Do NOT normalise because network may break up into disconnected components -
         #  but surrogate flows can still be estimated
 
         # cfb.update(nx.current_flow_betweenness_centrality(
         #     subG_undir, normalized=False, weight="recip_running_time_min"))
-        # PATCH SKIP
-        # cfb.update(nx.approximate_current_flow_betweenness_centrality(
-        #     subG_undir, normalized=False, weight="recip_running_time_min", epsilon=0.5, kmax=10000))
 
-        eb.update(nx.edge_betweenness_centrality(subG, normalized=True, weight="running_time_min"))
-
-        # Do NOT normalise because network may break up into disconnected components -
-        #  but surrogate flows can still be estimated
-        ecfb.update(nx.edge_current_flow_betweenness_centrality(
-            subG_undir, normalized=False, weight="recip_running_time_min"))
+        if not skip:  # PATCH SKIP
+            cfb.update(nx.approximate_current_flow_betweenness_centrality(
+                subG_undir, normalized=False, weight="recip_running_time_min", epsilon=0.5, kmax=10000))
+            # Do NOT normalise because network may break up into disconnected components -
+            #  but surrogate flows can still be estimated
+            ecfb.update(nx.edge_current_flow_betweenness_centrality(
+                subG_undir, normalized=False, weight="recip_running_time_min"))
 
     nx.set_node_attributes(G, bb, 'betweenness')
     nx.set_node_attributes(G, cc, 'closeness')
-    # PATCH SKIP
-    # nx.set_node_attributes(G, cfb, 'current_flow_betweenness')
-
     nx.set_edge_attributes(G, eb, 'edge_betweenness')
-    for u, v in G.edges():
-        try:
-            G.edges[u, v]["edge_current_flow_betweenness"] = ecfb[(u, v)]
-        except Exception as e:
-            G.edges[u, v]["edge_current_flow_betweenness"] = ecfb[(v, u)]  # PATCH
+
+    if not skip:  # PATCH SKIP
+        nx.set_node_attributes(G, cfb, 'current_flow_betweenness')
+        for u, v in G.edges():
+            try:
+                G.edges[u, v]["edge_current_flow_betweenness"] = ecfb[(u, v)]
+            except Exception as e:
+                G.edges[u, v]["edge_current_flow_betweenness"] = ecfb[(v, u)]  # PATCH
 
     return G
 
@@ -465,7 +463,7 @@ def transport_compare_flow_dur_distribution():
     plt.show()
 
 
-def power_calc_centrality(G):
+def power_calc_centrality(G, skip=False):
     """Calculate and assign centralities by conductance"""
     assert G.is_directed()
 
@@ -483,15 +481,15 @@ def power_calc_centrality(G):
     for subG in weakly_connected_component_subgraphs(G, copy=True):
         subG_undir = power_to_undirected(subG)
 
-        # PATCH SKIP
-        # cfb.update(custom_cfb(
-        #     subG_undir, normalized=False, weight="conductance",
-        #     sources=source_nodes, targets=target_nodes, solver="full", max=False))
+        if not skip:  # PATCH SKIP
+            cfb.update(custom_cfb(
+                subG_undir, normalized=False, weight="conductance",
+                sources=source_nodes, targets=target_nodes, solver="full", max=False))
 
-        # PATCH SKIP
-        # cfb_max.update(custom_cfb(
-        #     subG_undir, normalized=False, weight="conductance",
-        #     sources=source_nodes, targets=target_nodes, solver="full", max=True))
+        if not skip:  # PATCH SKIP
+            cfb_max.update(custom_cfb(
+                subG_undir, normalized=False, weight="conductance",
+                sources=source_nodes, targets=target_nodes, solver="full", max=True))
 
         eb.update(nx.edge_betweenness_centrality(subG, normalized=True, weight="resistance"))
 
@@ -499,13 +497,14 @@ def power_calc_centrality(G):
             subG_undir, normalized=False, weight="conductance",
             sources=source_nodes, targets=target_nodes, solver="full", max=False))
 
-        ecfb_max.update(custom_ecfb(
-            subG_undir, normalized=False, weight="conductance",
-            sources=source_nodes, targets=target_nodes, solver="full", max=True))
+        if not skip:  # PATCH SKIP
+            ecfb_max.update(custom_ecfb(
+                subG_undir, normalized=False, weight="conductance",
+                sources=source_nodes, targets=target_nodes, solver="full", max=True))
 
-    # PATCH SKIP
-    # nx.set_node_attributes(G, cfb, 'current_flow_betweenness')
-    # nx.set_node_attributes(G, cfb_max, 'current_flow_betweenness_max')
+    if not skip:  # PATCH SKIP
+        nx.set_node_attributes(G, cfb, 'current_flow_betweenness')
+        nx.set_node_attributes(G, cfb_max, 'current_flow_betweenness_max')
 
     nx.set_edge_attributes(G, eb, 'edge_betweenness')
     for u, v in G.edges():
@@ -513,11 +512,12 @@ def power_calc_centrality(G):
             G.edges[u, v]["edge_current_flow_betweenness"] = max(np.spacing(1.0), ecfb[(u, v)])
         except Exception as e:
             G.edges[u, v]["edge_current_flow_betweenness"] = max(np.spacing(1.0), ecfb[(v, u)])  # PATCH reversible links
-    for u, v in G.edges():
-        try:
-            G.edges[u, v]["edge_current_flow_betweenness_max"] = max(np.spacing(1.0), ecfb_max[(u, v)])
-        except Exception as e:
-            G.edges[u, v]["edge_current_flow_betweenness_max"] = max(np.spacing(1.0), ecfb_max[(v, u)])  # PATCH reversible links
+    if not skip:  # PATCH SKIP
+        for u, v in G.edges():
+            try:
+                G.edges[u, v]["edge_current_flow_betweenness_max"] = max(np.spacing(1.0), ecfb_max[(u, v)])
+            except Exception as e:
+                G.edges[u, v]["edge_current_flow_betweenness_max"] = max(np.spacing(1.0), ecfb_max[(v, u)])  # PATCH reversible links
 
     return G
 
