@@ -1,13 +1,15 @@
 import json
 import pickle
+import sys
 from datetime import datetime
 from dynamics import get_node, percolate_nodes, percolate_links, recompute_flows, fail_flow, fail_SI
 from util import parse_json
 
 
-def run_simulation(simplified=True, time_horizon=10,
+def run_simulation(simplified=True, time_horizon=20,
                    network="transport", mode="degree", top=1, override=None,
-                   cap_lwr_threshold=0.9, cap_upp_threshold=1.2,
+                   pow_cap_lwr_threshold=0.6, pow_cap_upp_threshold=1.0, pow_pmax=1.0,
+                   trans_cap_lwr_threshold=0.9, trans_cap_upp_threshold=1.0, trans_pmax=0.2,
                    ratio_lwr_threshold=4.0, ratio_upp_threshold=5.0,
                    infection_probability=0.05, recovery_probability=0.0,
                    geo_threshold=0.1, geo_probability=0.2):
@@ -15,7 +17,7 @@ def run_simulation(simplified=True, time_horizon=10,
     # Create log
     id = datetime.now().strftime("%m%d%Y_%H%M") + "_" + \
          str(override if override is not None else network + "_" + mode)
-    # sys.stdout = open(r'data/combined_network/infra_dynG_' + id + ".log", 'w')
+
     print("SETTINGS")
     print("simplified:", simplified)
     print("time_horizon:", time_horizon)
@@ -25,8 +27,10 @@ def run_simulation(simplified=True, time_horizon=10,
         print("network:", network)
         print("mode:", mode)
         print("top:", top)
-    print("cap_lwr_threshold:", cap_lwr_threshold)
-    print("cap_upp_threshold:", cap_upp_threshold)
+    print("pow_cap_lwr_threshold:", pow_cap_lwr_threshold)
+    print("pow_cap_upp_threshold:", pow_cap_upp_threshold)
+    print("trans_cap_lwr_threshold:", trans_cap_lwr_threshold)
+    print("trans_cap_upp_threshold:", trans_cap_upp_threshold)
     print("ratio_lwr_threshold:", ratio_lwr_threshold)
     print("ratio_upp_threshold:", ratio_upp_threshold)
     print("infection_probability:", infection_probability)
@@ -74,9 +78,12 @@ def run_simulation(simplified=True, time_horizon=10,
                         shortest_paths=shortest_paths[0])
 
     # Identify failures based on flow capacity or surges
-    newly_failed_nodes_flow, newly_failed_links_flow = \
-        fail_flow(G[1], G[0],
-                  cap_lwr_threshold=cap_lwr_threshold, cap_upp_threshold=cap_upp_threshold,
+    newly_failed_nodes_flow, newly_failed_links_flow, shortest_paths[1] = \
+        fail_flow(G[1], G[0], shortest_paths=shortest_paths[1],
+                  pow_cap_lwr_threshold=pow_cap_lwr_threshold, pow_cap_upp_threshold=pow_cap_upp_threshold,
+                  pow_pmax=pow_pmax,
+                  trans_cap_lwr_threshold=trans_cap_lwr_threshold, trans_cap_upp_threshold=trans_cap_upp_threshold,
+                  trans_pmax=trans_pmax,
                   ratio_lwr_threshold=ratio_lwr_threshold, ratio_upp_threshold=ratio_upp_threshold)
     failed_nodes[1].extend(newly_failed_nodes_flow)
     failed_links[1].extend(newly_failed_links_flow)
@@ -102,7 +109,8 @@ def run_simulation(simplified=True, time_horizon=10,
         # Percolate failed nodes & links
         Gn, bydef_failed_links = percolate_nodes(G[t-1], failed_nodes=failed_nodes[t-1])
         failed_links[t-1].extend(bydef_failed_links)
-        Gn = percolate_links(Gn, failed_links=failed_links[t-1])
+        Gn, bydef_failed_links = percolate_links(Gn, failed_links=failed_links[t-1])
+        failed_links[t-1].extend(bydef_failed_links)
         G.append(Gn)
 
         # Recompute flows, only if topology changed
@@ -113,9 +121,12 @@ def run_simulation(simplified=True, time_horizon=10,
                                 shortest_paths=shortest_paths[t-1])  # shortest_paths will be overwritten
 
         # Identify failures based on flow capacity or surges
-        newly_failed_nodes_flow, newly_failed_links_flow = \
-            fail_flow(G[t], G[t-1],
-                      cap_lwr_threshold=cap_lwr_threshold, cap_upp_threshold=cap_upp_threshold,
+        newly_failed_nodes_flow, newly_failed_links_flow, shortest_paths[t] = \
+            fail_flow(G[t], G[t-1], shortest_paths=shortest_paths[t],
+                      pow_cap_lwr_threshold=pow_cap_lwr_threshold, pow_cap_upp_threshold=pow_cap_upp_threshold,
+                      pow_pmax=pow_pmax,
+                      trans_cap_lwr_threshold=trans_cap_lwr_threshold, trans_cap_upp_threshold=trans_cap_upp_threshold,
+                      trans_pmax=trans_pmax,
                       ratio_lwr_threshold=ratio_lwr_threshold, ratio_upp_threshold=ratio_upp_threshold)
         failed_nodes[t].extend(newly_failed_nodes_flow)
         failed_links[t].extend(newly_failed_links_flow)
@@ -139,7 +150,8 @@ def run_simulation(simplified=True, time_horizon=10,
     # Percolate failed nodes & links
     Gn, bydef_failed_links = percolate_nodes(G[time_horizon-1], failed_nodes=failed_nodes[time_horizon-1])
     failed_links[time_horizon-1].extend(bydef_failed_links)
-    Gn = percolate_links(Gn, failed_links=failed_links[time_horizon-1])
+    Gn, bydef_failed_links = percolate_links(Gn, failed_links=failed_links[time_horizon-1])
+    failed_links[time_horizon-1].extend(bydef_failed_links)
     G.append(Gn)
 
     # Save the whole thing
@@ -149,10 +161,27 @@ def run_simulation(simplified=True, time_horizon=10,
 
 
 if __name__ == "__main__":
-    # TODO test on Cobourg Street Electricity Substation
-    run_simulation(simplified=True, time_horizon=20,
-                   network="power", mode="degree", top=1, override=["Cobourg Street Electricity Substation"],
-                   cap_lwr_threshold=0.9, cap_upp_threshold=1.2,
-                   ratio_lwr_threshold=4.0, ratio_upp_threshold=5.0,
+
+    # run_simulation(simplified=True, time_horizon=30,
+    #                network="power", mode="degree", top=1, override=["Cobourg Street Electricity Substation"],
+    #                pow_cap_lwr_threshold=0.9, pow_cap_upp_threshold=1.2,
+    #                trans_cap_lwr_threshold=0.9, trans_cap_upp_threshold=1.2,
+    #                ratio_lwr_threshold=4.0, ratio_upp_threshold=5.0,
+    #                infection_probability=0.05, recovery_probability=0.0,
+    #                geo_threshold=0.1, geo_probability=0.2)
+
+    sys.stdout = open(r'data/combined_network/.log', 'w')
+    run_simulation(simplified=True, time_horizon=3,
+                   network="power", mode="degree", top=1, override=["Brimsdown 132kV Gen"],
+                   pow_cap_lwr_threshold=0.6, pow_cap_upp_threshold=1.0, pow_pmax=1.0,
+                   trans_cap_lwr_threshold=0.9, trans_cap_upp_threshold=1.0, trans_pmax=0.2,
+                   ratio_lwr_threshold=1e5, ratio_upp_threshold=1e6,
                    infection_probability=0.05, recovery_probability=0.0,
-                   geo_threshold=0.1, geo_probability=0.2)
+                   geo_threshold=0.1, geo_probability=0.05)
+    sys.stdout.close()
+
+    # TODO Sensitivity analysis:
+    #  Justification for pow_cap_lwr_threshold: Based on Nie's setting of threshold near to baseline utilisation
+    #  which is average 57-58% for power network
+    #  Justification for trans_cap_lwr_threshold: Based on 10% (Goldbeck)
+
