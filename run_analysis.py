@@ -9,9 +9,9 @@ from globalparams import STATE_COLORS
 from util import weakly_connected_component_subgraphs
 
 # TODO Augment code to support combined plotting of multiple runs
-G = pickle.load(open('data/combined_network/cobourg_example/infra_dynG_06232021_1621_[\'Cobourg Street Electricity Substation\'].pkl', "rb"))
+G = pickle.load(open('data/combined_network/brimsdown132gen/SC3.pkl', "rb"))
 
-with open('data/combined_network/cobourg_example/shortest_paths_06232021_1621_[\'Cobourg Street Electricity Substation\'].json', 'rb') as json_file:
+with open('data/combined_network/brimsdown132gen/SC3.json', 'rb') as json_file:
     shortest_paths = json.load(json_file)
 
 nodes_t_functional = list()  # TODO convert to fraction of nodes still functional
@@ -129,17 +129,17 @@ axs[2, 1].set_ylabel("Fraction unfulfilled\npower demand")
 plt.show()
 
 # Plot networks to show failure propagation
-for i in range(len(G)):
-    Gi_undir = G[i].to_undirected()
-    GT = Gi_undir.subgraph([n for n in Gi_undir.nodes() if Gi_undir.nodes[n]["network"] == "transport"]).copy()
-    GP = Gi_undir.subgraph([n for n in Gi_undir.nodes() if Gi_undir.nodes[n]["network"] == "power"]).copy()
-    f, axs = plt.subplots(1, 2, figsize=(12, 4))
-    for j, g in enumerate([GT, GP]):
-        node_colors = [STATE_COLORS.get(g.nodes[n]["state"], "#FF0000") for n in g.nodes()]
-        pos2D = {n: g.nodes[n]["pos"][0:2] for n in g.nodes()}
-        edge_colors = [STATE_COLORS.get(g.edges[u, v]["state"], "#808080") for u, v in g.edges()]
-        nx.draw(g, ax=axs[j], pos=pos2D, node_size=5,
-                node_color=node_colors, edge_color=edge_colors)
-    # plt.savefig("data/combined_network/infra_dynG_06202021_1824_"+str(i)+".png")
-    # plt.savefig("data/combined_network/infra_dynG_06202021_1824_"+str(i)+".svg")
-    plt.show()
+# for i in range(len(G)):
+#     Gi_undir = G[i].to_undirected()
+#     GT = Gi_undir.subgraph([n for n in Gi_undir.nodes() if Gi_undir.nodes[n]["network"] == "transport"]).copy()
+#     GP = Gi_undir.subgraph([n for n in Gi_undir.nodes() if Gi_undir.nodes[n]["network"] == "power"]).copy()
+#     f, axs = plt.subplots(1, 2, figsize=(12, 4))
+#     for j, g in enumerate([GT, GP]):
+#         node_colors = [STATE_COLORS.get(g.nodes[n]["state"], "#FF0000") for n in g.nodes()]
+#         pos2D = {n: g.nodes[n]["pos"][0:2] for n in g.nodes()}
+#         edge_colors = [STATE_COLORS.get(g.edges[u, v]["state"], "#808080") for u, v in g.edges()]
+#         nx.draw(g, ax=axs[j], pos=pos2D, node_size=5,
+#                 node_color=node_colors, edge_color=edge_colors)
+#     # plt.savefig("data/brimsdown132gen/infra_dynG_06202021_1824_"+str(i)+".png")
+#     # plt.savefig("data/brimsdown132gen/infra_dynG_06202021_1824_"+str(i)+".svg")
+#     # plt.show()

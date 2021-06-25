@@ -270,6 +270,8 @@ if __name__ == "__main__":
         with open(r'data/transport_multiplex/flow/shortest_paths_skele.json', 'w') as json_file:
             json.dump(shortest_paths_skele, json_file)  # indent=2, cls=util.CustomEncoder
 
+    flow_check(G_skele)
+
     # T.M.5 Export graph nodelist
     try:
         combined_nodelist = pd.DataFrame([i[1] for i in G_skele.nodes(data=True)], index=[i[0] for i in G_skele.nodes(data=True)])

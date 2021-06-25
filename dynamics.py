@@ -233,27 +233,30 @@ def recompute_flows(G, newly_failed_nodes, newly_failed_links, shortest_paths):
             for u, v in zip(new_shortest_paths[s][t]["path"][:-1], new_shortest_paths[s][t]["path"][1:]):
                 new_G.edges[u, v]["sp_flow"] += new_shortest_paths[s][t]["flow"]
 
-    for subGT in weakly_connected_component_subgraphs(GT, copy=True):
-        if subGT.number_of_nodes() <= 2:
-            # Fail all subnetworks with <= 2 stations
-            for n in subGT.nodes():
-                subseq_failed_nodes.append(n)
-                print("Node", n, "failed deterministically due to subnetwork collapse")
-            for u, v in subGT.edges():
-                subseq_failed_links.append((u, v))
-                print("Link", u, "-", v, "failed deterministically due to subnetwork collapse")
-        else:
-            subGT = transport_calc_centrality(subGT, skip=True)  # PATCH SKIP
-            for n in subGT.nodes():
-                new_G.nodes[n]["betweenness"] = subGT.nodes[n]["betweenness"]
-                new_G.nodes[n]["closeness"] = subGT.nodes[n]["closeness"]
-                if "current_flow_betweenness" in subGT.nodes[n]:
-                    new_G.nodes[n]["current_flow_betweenness"] = subGT.nodes[n]["current_flow_betweenness"]
-            for u, v in subGT.edges():
-                if "edge_betweenness" in subGT.edges[u, v]:
-                    new_G.edges[u, v]["edge_betweenness"] = subGT.edges[u, v]["edge_betweenness"]
-                if "edge_current_flow_betweenness" in subGT.edges[u, v]:
-                    new_G.edges[u, v]["edge_current_flow_betweenness"] = subGT.edges[u, v]["edge_current_flow_betweenness"]
+    if len(GT) == 0:  # Skip if GP has failed completely
+        print("Transport network has failed completely - no functional nodes left")
+    else:
+        for subGT in weakly_connected_component_subgraphs(GT, copy=True):
+            if subGT.number_of_nodes() <= 2:
+                # Fail all subnetworks with <= 2 stations
+                for n in subGT.nodes():
+                    subseq_failed_nodes.append(n)
+                    print("Node", n, "failed deterministically due to subnetwork collapse")
+                for u, v in subGT.edges():
+                    subseq_failed_links.append((u, v))
+                    print("Link", u, "-", v, "failed deterministically due to subnetwork collapse")
+            else:
+                subGT = transport_calc_centrality(subGT, skip=True)  # PATCH SKIP
+                for n in subGT.nodes():
+                    new_G.nodes[n]["betweenness"] = subGT.nodes[n]["betweenness"]
+                    new_G.nodes[n]["closeness"] = subGT.nodes[n]["closeness"]
+                    if "current_flow_betweenness" in subGT.nodes[n]:
+                        new_G.nodes[n]["current_flow_betweenness"] = subGT.nodes[n]["current_flow_betweenness"]
+                for u, v in subGT.edges():
+                    if "edge_betweenness" in subGT.edges[u, v]:
+                        new_G.edges[u, v]["edge_betweenness"] = subGT.edges[u, v]["edge_betweenness"]
+                    if "edge_current_flow_betweenness" in subGT.edges[u, v]:
+                        new_G.edges[u, v]["edge_current_flow_betweenness"] = subGT.edges[u, v]["edge_current_flow_betweenness"]
 
     # Combine into hybrid measure for link flow,
     #  and Assign baseline % capacity utilised
@@ -276,7 +279,9 @@ def recompute_flows(G, newly_failed_nodes, newly_failed_links, shortest_paths):
 
     # POWER NETWORK RECOMPUTATION
 
-    if not nx.is_weakly_connected(GP):
+    if len(GP) == 0:  # Skip if GP has failed completely
+        print("Power network has failed completely - no functional nodes left")
+    elif not nx.is_weakly_connected(GP):
         for subGP in weakly_connected_component_subgraphs(GP, copy=True):
             # If subgrid only has one node, it fails too
             subGP_nodes = [n for n in subGP.nodes()]

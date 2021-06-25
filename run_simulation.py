@@ -1,3 +1,4 @@
+import copy
 import json
 import pickle
 import sys
@@ -6,8 +7,8 @@ from dynamics import get_node, percolate_nodes, percolate_links, recompute_flows
 from util import parse_json
 
 
-def run_simulation(simplified=True, time_horizon=20,
-                   network="transport", mode="degree", top=1, override=None,
+def run_simulation(id, simplified=True, time_horizon=20,
+                   network="transport", type=None, mode="degree", top=1, override=None,
                    pow_cap_lwr_threshold=0.6, pow_cap_upp_threshold=1.0, pow_pmax=1.0,
                    trans_cap_lwr_threshold=0.9, trans_cap_upp_threshold=1.0, trans_pmax=0.2,
                    ratio_lwr_threshold=4.0, ratio_upp_threshold=5.0,
@@ -15,9 +16,6 @@ def run_simulation(simplified=True, time_horizon=20,
                    geo_threshold=0.1, geo_probability=0.2):
 
     # Create log
-    id = datetime.now().strftime("%m%d%Y_%H%M") + "_" + \
-         str(override if override is not None else network + "_" + mode)
-
     print("SETTINGS")
     print("simplified:", simplified)
     print("time_horizon:", time_horizon)
@@ -64,7 +62,7 @@ def run_simulation(simplified=True, time_horizon=20,
     if override is not None:
         failed_nodes[0] = override
     else:
-        failed_nodes[0], _ = get_node(G[0], network=network, mode=mode, top=top)
+        failed_nodes[0], _ = get_node(G[0], network=network, type=type, mode=mode, top=top)
     # failed_nodes[0] = ["Kingsway 11kV Gen"]
     # failed_nodes[0] = [0]
 
@@ -101,8 +99,6 @@ def run_simulation(simplified=True, time_horizon=20,
     print("Iteration", "1", "failed nodes:", str(failed_nodes[1]))
     print("Iteration", "1", "failed links:", str(failed_links[1]))
 
-    # TODO TOO SLOW - try to remove centrality calculations, if not absolutely necessary!
-
     for t in range(2, time_horizon):
         print("ITERATION", t)
 
@@ -115,10 +111,14 @@ def run_simulation(simplified=True, time_horizon=20,
 
         # Recompute flows, only if topology changed
         # TODO can we speed up by skipping this for minor changes in topology OR alternate iterations?
-        if len(failed_nodes[t-1]) > 0 and len(failed_links[t-1]) > 0:
+        if len(failed_nodes[t-1]) > 0 or len(failed_links[t-1]) > 0:
             G[t], shortest_paths[t], failed_nodes[t], failed_links[t] = \
                 recompute_flows(G[t], newly_failed_nodes=failed_nodes[t-1], newly_failed_links=failed_links[t-1],
                                 shortest_paths=shortest_paths[t-1])  # shortest_paths will be overwritten
+        else:
+            shortest_paths[t] = copy.deepcopy(shortest_paths[t-1])
+            failed_nodes[t] = list()
+            failed_links[t] = list()
 
         # Identify failures based on flow capacity or surges
         newly_failed_nodes_flow, newly_failed_links_flow, shortest_paths[t] = \
@@ -155,14 +155,14 @@ def run_simulation(simplified=True, time_horizon=20,
     G.append(Gn)
 
     # Save the whole thing
-    pickle.dump(G, open(r'data/combined_network/infra_dynG_'+id+".pkl", 'wb+'))
-    with open(r'data/combined_network/shortest_paths_'+id+".json", 'w') as json_file:
+    pickle.dump(G, open(r'data/combined_network/brimsdown132gen/'+id+".pkl", 'wb+'))
+    with open(r'data/combined_network/brimsdown132gen/'+id+".json", 'w') as json_file:
         json.dump(shortest_paths, json_file)  # indent=2, cls=util.CustomEncoder
 
 
 if __name__ == "__main__":
 
-    # run_simulation(simplified=True, time_horizon=30,
+    # run_simulation(id, simplified=True, time_horizon=30,
     #                network="power", mode="degree", top=1, override=["Cobourg Street Electricity Substation"],
     #                pow_cap_lwr_threshold=0.9, pow_cap_upp_threshold=1.2,
     #                trans_cap_lwr_threshold=0.9, trans_cap_upp_threshold=1.2,
@@ -170,15 +170,38 @@ if __name__ == "__main__":
     #                infection_probability=0.05, recovery_probability=0.0,
     #                geo_threshold=0.1, geo_probability=0.2)
 
-    sys.stdout = open(r'data/combined_network/.log', 'w')
-    run_simulation(simplified=True, time_horizon=3,
-                   network="power", mode="degree", top=1, override=["Brimsdown 132kV Gen"],
-                   pow_cap_lwr_threshold=0.6, pow_cap_upp_threshold=1.0, pow_pmax=1.0,
-                   trans_cap_lwr_threshold=0.9, trans_cap_upp_threshold=1.0, trans_pmax=0.2,
-                   ratio_lwr_threshold=1e5, ratio_upp_threshold=1e6,
-                   infection_probability=0.05, recovery_probability=0.0,
-                   geo_threshold=0.1, geo_probability=0.05)
-    sys.stdout.close()
+    terminal = sys.stdout
+
+    tests = [("SB", 0.8, 0.2, 0.05),
+             ("SC1", 0.999999, 0.2, 0.05), ("SC2", 0.9, 0.2, 0.05), ("SC3", 0.7, 0.2, 0.05), ("SC4", 0.6, 0.2, 0.05),
+             ("ST1", 0.8, 0., 0.05), ("ST2", 0.8, 0.05, 0.05), ("ST3", 0.8, 0.1, 0.05), ("ST4", 0.8, 0.4, 0.05),
+             ("SI1", 0.8, 0.2, 0.), ("SI2", 0.8, 0.2, 0.1), ("SI3", 0.8, 0.2, 0.2), ("SI4", 0.8, 0.2, 0.4)]
+
+    for test in tests:
+        id = test[0]
+        lwr_threshold = test[1]
+        trans_pmax = test[2]
+        prob = test[3]
+
+        id = id + "_" + datetime.now().strftime("%m%d%Y_%H%M")
+        print(id)
+
+        try:
+            sys.stdout = open(r'data/combined_network/brimsdown132gen/' + id + '.log', 'w+')
+            run_simulation(id, simplified=True, time_horizon=50,
+                           network="power", type=None, mode="thruflow", top=1, override=["Brimsdown 132kV Gen"],
+                           pow_cap_lwr_threshold=lwr_threshold, pow_cap_upp_threshold=1.0, pow_pmax=1.0,
+                           trans_cap_lwr_threshold=lwr_threshold, trans_cap_upp_threshold=1.0, trans_pmax=trans_pmax,
+                           ratio_lwr_threshold=1e6, ratio_upp_threshold=1e7,
+                           infection_probability=prob, recovery_probability=0.0,
+                           geo_threshold=0.1, geo_probability=prob)
+            sys.stdout.close()
+            sys.stdout = terminal
+        except Exception as e:
+            sys.stdout.close()
+            sys.stdout = terminal
+            print(e)
+            continue  # continue to next test
 
     # TODO Sensitivity analysis:
     #  Justification for pow_cap_lwr_threshold: Based on Nie's setting of threshold near to baseline utilisation
