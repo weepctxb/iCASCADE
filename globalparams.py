@@ -122,3 +122,6 @@ TRANSPORT_PROXIMITY_THRESHOLD = 0.6
 
 LOAD_CAP = 1.2
 TRAIN_DUR_THRESHOLD_MIN = 1e5  # 60
+
+COST_TRANSPORT = 11.21 * (107.1 / 99.2) / 60  # GBP per trip per min travelled
+COST_POWER = 0.2003 * 1e3  # GBP per MW per hr
