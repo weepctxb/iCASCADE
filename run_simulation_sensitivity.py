@@ -86,7 +86,7 @@ def run_simulation(id, simplified=True, time_horizon=20,
     failed_nodes[1].extend(newly_failed_nodes_flow)
     failed_links[1].extend(newly_failed_links_flow)
 
-    # Identify failures based on diffusion process # TODO Fail deterministically for interdependencies
+    # Identify failures based on diffusion process
     newly_failed_nodes_dif = fail_SI(G[1],
                                      infection_probability=infection_probability,
                                      recovery_probability=recovery_probability,
@@ -96,11 +96,8 @@ def run_simulation(id, simplified=True, time_horizon=20,
 
     failed_nodes[1] = list(set(failed_nodes[1]))
     failed_links[1] = list(set(failed_links[1]))
-    print("Iteration", "1", "failed nodes:", str(failed_nodes[1]))
-    print("Iteration", "1", "failed links:", str(failed_links[1]))
 
     for t in range(2, time_horizon):
-        print("ITERATION", t)
 
         # Percolate failed nodes & links
         Gn, bydef_failed_links = percolate_nodes(G[t-1], failed_nodes=failed_nodes[t-1])
@@ -108,6 +105,11 @@ def run_simulation(id, simplified=True, time_horizon=20,
         Gn, bydef_failed_links = percolate_links(Gn, failed_links=failed_links[t-1])
         failed_links[t-1].extend(bydef_failed_links)
         G.append(Gn)
+
+        print("Iteration", str(t-1), "failed nodes:", str(failed_nodes[1]))
+        print("Iteration", str(t-1), "failed links:", str(failed_links[1]))
+
+        print("ITERATION", t)
 
         # Recompute flows, only if topology changed
         # TODO can we speed up by skipping this for minor changes in topology OR alternate iterations?
@@ -141,8 +143,6 @@ def run_simulation(id, simplified=True, time_horizon=20,
 
         failed_nodes[t] = list(set(failed_nodes[t]))
         failed_links[t] = list(set(failed_links[t]))
-        print("Iteration", str(t), "failed nodes:", str(failed_nodes[t]))
-        print("Iteration", str(t), "failed links:", str(failed_links[t]))
 
     # Last iteration
     print("ITERATION", time_horizon)
@@ -153,6 +153,9 @@ def run_simulation(id, simplified=True, time_horizon=20,
     Gn, bydef_failed_links = percolate_links(Gn, failed_links=failed_links[time_horizon-1])
     failed_links[time_horizon-1].extend(bydef_failed_links)
     G.append(Gn)
+
+    print("Iteration", str(time_horizon-1), "failed nodes:", str(failed_nodes[time_horizon-1]))
+    print("Iteration", str(time_horizon-1), "failed links:", str(failed_links[time_horizon-1]))
 
     # Save the whole thing
     pickle.dump(G, open(r'data/combined_network/brimsdown132gen/'+id+".pkl", 'wb+'))
