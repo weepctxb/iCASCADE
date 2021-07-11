@@ -59,6 +59,13 @@ for index, G in enumerate(GG):
                                    if (G[i].edges[e]["network"] == "physical_interdependency"
                                    and G[i].edges[e]["state"] == 1)]))
 
+        # Calculate node, link & GCC robustness (Liu, Yin, Chen, Lv, Zhang - 2021)
+        node_robustness[index].append((nodes_t_functional[index][-1] + nodes_p_functional[index][-1]) /
+                               (nodes_t_functional[index][0] + nodes_p_functional[index][0]))
+        link_robustness[index].append((links_t_functional[index][-1] + links_p_functional[index][-1] + links_i_functional[index][-1]) /
+                               (links_t_functional[index][0] + links_p_functional[index][0] + links_i_functional[index][0]))
+        GCC_robustness[index].append((max(size_sub[index][-1]) if len(size_sub[index][-1]) > 0 else 0) / max(size_sub[index][0]))
+
         # Track functional components & GCC size
         num_t_sub[index].append(len([subG for subG in weakly_connected_component_subgraphs(GT, copy=True)]))
         size_t_sub[index].append([len(subG) for subG in weakly_connected_component_subgraphs(GT, copy=True)])
@@ -75,7 +82,7 @@ for index, G in enumerate(GG):
         fulfilled_power_demand[index].append(fd)
         unfulfilled_power_demand[index].append(fulfilled_power_demand[index][0] - fd)
         # Units: (MW demand) * (1h period) * (GBP / MWh) = (MW demand in 1h period) * (GBP / MWh) = GBP over 1h period
-        cost_impact_power.append((fulfilled_power_demand[index][0] - fd) * COST_POWER)
+        cost_impact_power[index].append((fulfilled_power_demand[index][0] - fd) * COST_POWER)
 
 for index, shortest_paths in enumerate(sp):
     # Track unfulfilled trips, and increase in travel time for fulfilled trips
@@ -103,7 +110,7 @@ for index, shortest_paths in enumerate(sp):
         unfulfilled_train_time[index].append(utt)
 
         # Units: (trip-min demand in 1h period) * (GBP / trip-min) = GBP over 1h period
-        cost_impact_train.append(unfulfilled_train_time[index][-1] * COST_TRANSPORT
+        cost_impact_train[index].append(unfulfilled_train_time[index][-1] * COST_TRANSPORT
                                  + fulfilled_train_time_inc[index][-1] * COST_TRANSPORT)
 
 # for index, G in enumerate(GG):

@@ -91,6 +91,5 @@ pts.glyph.color_mode = 'color_by_scalar'
 pts.module_manager.scalar_lut_manager.lut.table = node_colors
 pts.mlab_source.dataset.lines = np.array(list(G_infra_renum.edges()))
 tube = mlab.pipeline.tube(pts, tube_radius=0.001)
-# TODO Add colours to individual tubes
-mlab.pipeline.surface(tube)
+mlab.pipeline.surface(tube, color=(51./255., 102./255., 153./255.))  # (0.0, 0.0, 0.0)
 mlab.show()

@@ -4,8 +4,9 @@ cache
 __pycache__
 data
 test
-test.py
+plot/degreehist.py
 test_*.py
 temp_*.css
 backup
 hpc
+plot
